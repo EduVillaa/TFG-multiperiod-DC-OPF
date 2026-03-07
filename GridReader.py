@@ -150,7 +150,7 @@ def add_dispatchable_generators(grid: pypsa.Network, df_Gen_Dispatchable: pd.Dat
                     p_nom=step,
                     p_min_pu=p_min_pu,
                     marginal_cost=marginal_cost,
-                    carrier="AC"
+                    carrier="AC",
                 )
         else:
             grid.add(
@@ -159,7 +159,7 @@ def add_dispatchable_generators(grid: pypsa.Network, df_Gen_Dispatchable: pd.Dat
                 p_nom=Pmax,
                 p_min_pu=(Pmin / Pmax) if Pmax > 0 else 0.0,
                 marginal_cost=b,
-                carrier="AC"
+                carrier="AC",
             )
 
 def add_loads(grid: pypsa.Network, df_Net_Loads: pd.DataFrame, df_SYS_settings: pd.DataFrame) -> None:
@@ -578,10 +578,12 @@ def main():
 
     solver=str(df_SYS_settings.loc[2, "SYSTEM PARAMETERS"])
     solve_opf(grid, solver_name=solver)
-    #print(grid.generators[["p_nom", "p_min_pu", "marginal_cost", "bus"]])
+    print(grid.generators[["p_nom", "p_min_pu", "marginal_cost", "bus"]])
     #print(grid.storage_units[["p_nom", "max_hours", "bus", "efficiency_store", "efficiency_dispatch", "standing_loss", "state_of_charge_initial", "cyclic_state_of_charge", "marginal_cost"]])
     #print("\n")
+    print(grid.generators_t.p)
 
+    print(grid.objective)
     export_results(grid, "ExampleGrid_RESULTS.xlsx", case_name="ExampleGrid - Week", include_prices=True)
 
 
