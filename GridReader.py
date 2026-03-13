@@ -60,9 +60,31 @@ def leerhojas(filename: str) -> dict:
         header=2
     ).iloc[:, 1:]
 
+    # --- GRID CONNECTION ---
+    sheets["Grid_connection"] = pd.read_excel(
+        filename,
+        sheet_name="Grid_connection",
+        header=2
+    ).iloc[:, 1:]
+
+    # --- TS WIND PROFILES ---
+    sheets["TS_Wind_Profiles"] = pd.read_excel(
+        filename,
+        sheet_name="TS_Wind_Profiles",
+        header=0
+    ).iloc[:, 0:]
+
+    # --- TS PV PROFILES ---
+    sheets["TS_PV_Profiles"] = pd.read_excel(
+        filename,
+        sheet_name="TS_PV_Profiles",
+        header=0
+    ).iloc[:, 0:]
+
     return sheets
 
 def add_storage_unit(grid: pypsa.Network, df_StorageUnit: pd.DataFrame) -> None:
+
     df_StorageUnit["efficiency_store (p.u)"] = pd.to_numeric(df_StorageUnit["efficiency_store (p.u)"], errors="coerce").fillna(0.95).astype(float)
     df_StorageUnit["efficiency_dispatch (p.u)"] = pd.to_numeric(df_StorageUnit["efficiency_dispatch (p.u)"], errors="coerce").fillna(0.95).astype(float)
     df_StorageUnit["standing_loss (%/h)"] = pd.to_numeric(df_StorageUnit["standing_loss (%/h)"], errors="coerce").fillna(0)
@@ -90,6 +112,50 @@ def add_storage_unit(grid: pypsa.Network, df_StorageUnit: pd.DataFrame) -> None:
                     marginal_cost = df_StorageUnit.loc[n, "marginal_cost (€/MWh)"], #Puede representar degradación y costes operativos
                     carrier = "AC",
                 )
+            
+def grid_connection(grid: pypsa.Network, df_Grid_connection: pd.DataFrame) -> None:
+    grid.add(
+        "Bus",
+        "PCC",
+        v_nom=df_Grid_connection.loc[0, "Grid rated voltage at the PCC"],
+        carrier="AC"
+    )
+
+    df_Grid_connection["Thermal limit (MW)"] = pd.to_numeric(
+        df_Grid_connection["Thermal limit (MW)"], errors="coerce"
+    ).fillna(1e6) # Si se deja vacía la columna de límite térmico se asume que no hay límite.
+
+    for n in range(df_Grid_connection["Bus"].count()):
+        grid.add(
+            "Line",
+            f"LPCC{int(df_Grid_connection.loc[n, 'Bus'])}",
+            bus0="PCC",
+            bus1=f"Bus_node_{int(df_Grid_connection.loc[n, 'Bus'])}",
+            x=df_Grid_connection.loc[n, "Reactance (p.u)"],
+            r=1e-6,
+            s_nom=df_Grid_connection.loc[n, "Thermal limit (MW)"],
+            carrier="AC"
+        )
+
+    # Compra a red
+    grid.add(
+        "Generator",
+        "Grid_import",
+        bus="PCC",
+        p_nom = df_Grid_connection.loc[0, "Import"],
+        marginal_cost = df_Grid_connection.loc[2, "Import"],
+        carrier="AC"
+    )
+    # Venta a red
+    grid.add(
+        "Generator",
+        "Grid_export",
+        bus="PCC",
+        p_nom=df_Grid_connection.loc[0, "Export"],
+        marginal_cost = -df_Grid_connection.loc[2, "Export"],
+        sign=-1,
+        carrier="AC"
+    )
 
 def build_network(df_SYS_settings: pd.DataFrame) -> pypsa.Network:
     grid = pypsa.Network()
@@ -183,6 +249,10 @@ def add_loads(grid: pypsa.Network, df_Net_Loads: pd.DataFrame, df_SYS_settings: 
                         carrier="AC")
 
 def add_lines(grid: pypsa.Network, df_Net_Lines: pd.DataFrame) -> None:
+    df_Net_Lines["Thermal limit (MW)"] = pd.to_numeric(
+        df_Net_Lines["Thermal limit (MW)"], # Si se deja vacía la columna de límite térmico se asume que no hay límite.
+        errors="coerce").fillna(1e6) 
+    
     for n in range(df_Net_Lines["From"].count()):
         desde = int(df_Net_Lines.loc[n, "From"])
         hasta = int(df_Net_Lines.loc[n, "To"])
@@ -196,31 +266,43 @@ def add_lines(grid: pypsa.Network, df_Net_Lines: pd.DataFrame) -> None:
             carrier="AC"
         )
 
-def add_renewable_generator(grid: pypsa.Network, df_Gen_Renewable: pd.DataFrame, df_SYS_settings: pd.DataFrame) -> None:
+def wind_series_reader(df_SYS_settings: pd.DataFrame,
+                            df_TS_Wind_Profiles: pd.DataFrame) -> pd.Series:
+    region = str(df_SYS_settings.loc[4, "SYSTEM PARAMETERS"])
+    start_Date = pd.to_datetime(df_SYS_settings.loc[5, "SYSTEM PARAMETERS"])
 
-    time_horizon = str(df_SYS_settings.loc[3, "SYSTEM PARAMETERS"])
+    horizon = df_SYS_settings.loc[3, "SYSTEM PARAMETERS"]
 
-    if time_horizon == "Static":
-            pv_profile = pd.Series(
-            [1],
-            index=grid.snapshots)
+    if horizon == "Day":
+        return df_TS_Wind_Profiles.loc[start_Date.strftime("%Y-%m-%d"), region]
 
-    elif time_horizon == "Day":
-        pv_profile = [0, 0, 0, 0, 0, 0,
-        0.05, 0.15, 0.35, 0.60, 0.80, 0.95,
-        1.00, 0.90, 0.70, 0.45, 0.20, 0.05,
-        0, 0, 0, 0, 0, 0]
+    elif horizon == "Static":
+        return pd.Series([1], name=region)
 
-    elif time_horizon == "Week":
-        pv_profile = (
-        [0,0,0,0,0,0,0.05,0.15,0.35,0.60,0.80,0.95,1.0,0.9,0.7,0.45,0.2,0.05,0,0,0,0,0,0] +   # Mon sunny
-        [0,0,0,0,0,0,0.04,0.12,0.30,0.55,0.70,0.80,0.85,0.75,0.55,0.35,0.15,0.04,0,0,0,0,0,0] + # Tue cloudy
-        [0,0,0,0,0,0,0.05,0.18,0.40,0.70,0.90,1.0,1.0,0.95,0.80,0.55,0.25,0.08,0,0,0,0,0,0] +   # Wed clear
-        [0,0,0,0,0,0,0.03,0.10,0.25,0.45,0.60,0.70,0.75,0.65,0.45,0.25,0.10,0.03,0,0,0,0,0,0] + # Thu cloudy
-        [0,0,0,0,0,0,0.05,0.20,0.45,0.75,0.95,1.0,1.0,0.9,0.75,0.50,0.25,0.08,0,0,0,0,0,0] +    # Fri clear
-        [0,0,0,0,0,0,0.04,0.15,0.30,0.55,0.75,0.85,0.90,0.80,0.60,0.40,0.18,0.05,0,0,0,0,0,0] + # Sat mixed
-        [0,0,0,0,0,0,0.02,0.08,0.20,0.35,0.50,0.60,0.65,0.55,0.40,0.25,0.10,0.02,0,0,0,0,0,0]   # Sun bad weather
-        )
+    elif horizon == "Week":
+        return df_TS_Wind_Profiles.loc[start_Date:, region].iloc[:168]
+    
+def pv_series_reader(df_SYS_settings: pd.DataFrame,
+                            df_TS_PV_Profiles: pd.DataFrame) -> pd.Series:
+    region = str(df_SYS_settings.loc[4, "SYSTEM PARAMETERS"])
+    start_Date = pd.to_datetime(df_SYS_settings.loc[5, "SYSTEM PARAMETERS"])
+
+    horizon = df_SYS_settings.loc[3, "SYSTEM PARAMETERS"]
+
+    if horizon == "Day":
+        return df_TS_PV_Profiles.loc[start_Date.strftime("%Y-%m-%d"), region]
+
+    elif horizon == "Static":
+        return pd.Series([1], name=region)
+
+    elif horizon == "Week":
+        return df_TS_PV_Profiles.loc[start_Date:, region].iloc[:168]
+
+def add_renewable_generator(grid: pypsa.Network, df_Gen_Renewable: pd.DataFrame,
+    df_SYS_settings: pd.DataFrame, df_TS_Wind_Profiles: pd.DataFrame, df_TS_PV_Profiles: pd.DataFrame) -> None:
+
+    wind_profile = wind_series_reader(df_SYS_settings, df_TS_Wind_Profiles)
+    pv_profile = pv_series_reader(df_SYS_settings, df_TS_PV_Profiles)
 
     for n in range(df_Gen_Renewable["GENERATOR LOCATION"].count()):
         location = df_Gen_Renewable.loc[n, "GENERATOR LOCATION"]
@@ -231,8 +313,12 @@ def add_renewable_generator(grid: pypsa.Network, df_Gen_Renewable: pd.DataFrame,
                     p_min_pu = 0, #No hay restricción de potencia mínima para las renovables
                     marginal_cost = 0, #El coste marginal para las renovables se considera nulo
                     carrier= "AC")
-
-            grid.generators_t.p_max_pu[f"RenewableGen{location}_g{n}"] = pv_profile
+            
+            if df_Gen_Renewable.loc[n, "Renewable Type"] == "PV":
+                grid.generators_t.p_max_pu[f"RenewableGen{location}_g{n}"] = pv_profile.values
+            
+            elif df_Gen_Renewable.loc[n, "Renewable Type"] == "Wind":
+                grid.generators_t.p_max_pu[f"RenewableGen{location}_g{n}"] = wind_profile.values
 
 def solve_opf(grid: pypsa.Network, solver_name) -> None:
     grid.optimize(solver_name=solver_name)
@@ -531,11 +617,6 @@ def export_results(
 
     return out_path
 
-
-# ------------------ ejemplo de uso ------------------
-# n.lopf(...) o n.optimize(...) primero
-# export_results(n, "ExampleGrid_RESULTS.xlsx", case_name="ExampleGrid - Week", include_prices=True)
-
 def drawGrid(grid: pypsa.Network):
     # convertir red PyPSA a grafo
     G = grid.graph()
@@ -564,7 +645,18 @@ def main():
     df_Gen_Dispatchable = data["Gen_Dispatchable"]
     df_Gen_Renewable = data["Gen_Renewable"]
     df_StorageUnit = data["StorageUnit"]
-    
+    df_Grid_connection = data["Grid_connection"]
+
+    df_TS_Wind_Profiles = data["TS_Wind_Profiles"]
+    df_TS_Wind_Profiles["time"] = pd.to_datetime(df_TS_Wind_Profiles["time"]).dt.tz_localize(None)
+    df_TS_Wind_Profiles = df_TS_Wind_Profiles.set_index("time")
+
+    df_TS_PV_Profiles = data["TS_PV_Profiles"]
+    df_TS_PV_Profiles["time"] = pd.to_datetime(df_TS_PV_Profiles["time"]).dt.tz_localize(None)
+    df_TS_PV_Profiles = df_TS_PV_Profiles.set_index("time")
+
+
+
     grid = build_network(df_SYS_settings)
 
     add_buses(grid, df_Net_Buses)
@@ -573,18 +665,33 @@ def main():
     #la función add_loads debe recibir también df_SYS_settings para leer el VOLL en €/MWh introducido por el usuario
 
     add_dispatchable_generators(grid, df_Gen_Dispatchable)
-    add_renewable_generator(grid, df_Gen_Renewable, df_SYS_settings)
+    add_renewable_generator(grid, df_Gen_Renewable, df_SYS_settings, df_TS_Wind_Profiles, df_TS_PV_Profiles)
     add_storage_unit(grid, df_StorageUnit)
+    grid_connection(grid, df_Grid_connection)
+
+
+    
+
+
 
     solver=str(df_SYS_settings.loc[2, "SYSTEM PARAMETERS"])
-    solve_opf(grid, solver_name=solver)
-    print(grid.generators[["p_nom", "p_min_pu", "marginal_cost", "bus"]])
+    #solve_opf(grid, solver_name=solver)
+    #print(grid.generators[["p_nom", "p_min_pu", "marginal_cost", "bus"]])
     #print(grid.storage_units[["p_nom", "max_hours", "bus", "efficiency_store", "efficiency_dispatch", "standing_loss", "state_of_charge_initial", "cyclic_state_of_charge", "marginal_cost"]])
     #print("\n")
-    print(grid.generators_t.p)
+    #print(grid.generators_t.p)
 
-    print(grid.objective)
-    export_results(grid, "ExampleGrid_RESULTS.xlsx", case_name="ExampleGrid - Week", include_prices=True)
+    #print(grid.objective)
+    #export_results(grid, "ExampleGrid_RESULTS.xlsx", case_name="ExampleGrid - Week", include_prices=True)
+
+    print(grid.generators_t.p_max_pu)
+
+    """"
+    print(grid.generators_t.p)
+    print(grid.loads_t.p)
+    print(grid.links_t.p0)
+    print(grid.links_t.p1)
+    """
 
 
 
