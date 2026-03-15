@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import networkx as nx
 from pathlib import Path
 from typing import Optional, Dict, Any
+import matplotlib.dates as mdates
 
 
 def leerhojas(filename: str) -> dict:
@@ -160,16 +161,17 @@ def grid_connection(grid: pypsa.Network, df_Grid_connection: pd.DataFrame) -> No
 def build_network(df_SYS_settings: pd.DataFrame) -> pypsa.Network:
     grid = pypsa.Network()
     grid.add("Carrier", "AC")
-
+    start_date = str(df_SYS_settings.loc[5, "SYSTEM PARAMETERS"])
+    print(start_date)
     time_horizon = str(df_SYS_settings.loc[3, "SYSTEM PARAMETERS"])
     if time_horizon == "Static":
         grid.set_snapshots(pd.DatetimeIndex(["2026-01-01 00:00"]))
 
     elif time_horizon == "Day":
-        grid.set_snapshots(pd.date_range("2026-01-01", periods=24, freq="h"))
+        grid.set_snapshots(pd.date_range(start_date, periods=24, freq="h"))
 
     elif time_horizon == "Week":
-        grid.set_snapshots(pd.date_range("2026-01-01", periods=168, freq="h"))
+        grid.set_snapshots(pd.date_range(start_date, periods=168, freq="h"))
   
     return grid
 
@@ -307,31 +309,37 @@ def add_renewable_generator(grid: pypsa.Network, df_Gen_Renewable: pd.DataFrame,
     for n in range(df_Gen_Renewable["GENERATOR LOCATION"].count()):
         location = df_Gen_Renewable.loc[n, "GENERATOR LOCATION"]
         if pd.notna(location):
-            grid.add("Generator", f"RenewableGen{location}_g{n}", #g{n} es un indicador necesario para diferenciar los generadores que están en el mismo bus
+            
+            if df_Gen_Renewable.loc[n, "Renewable Type"] == "PV":
+                grid.add("Generator", f"PV{location}_g{n}", #g{n} es un indicador necesario para diferenciar los generadores que están en el mismo bus
                     bus = f"Bus_node_{location}", 
                     p_nom = df_Gen_Renewable.loc[n, "Rated active power (MW)"],
                     p_min_pu = 0, #No hay restricción de potencia mínima para las renovables
                     marginal_cost = 0, #El coste marginal para las renovables se considera nulo
                     carrier= "AC")
-            
-            if df_Gen_Renewable.loc[n, "Renewable Type"] == "PV":
-                grid.generators_t.p_max_pu[f"RenewableGen{location}_g{n}"] = pv_profile.values
+                grid.generators_t.p_max_pu[f"PV{location}_g{n}"] = pv_profile.values
             
             elif df_Gen_Renewable.loc[n, "Renewable Type"] == "Wind":
-                grid.generators_t.p_max_pu[f"RenewableGen{location}_g{n}"] = wind_profile.values
+                grid.add("Generator", f"Wind{location}_g{n}", #g{n} es un indicador necesario para diferenciar los generadores que están en el mismo bus
+                    bus = f"Bus_node_{location}", 
+                    p_nom = df_Gen_Renewable.loc[n, "Rated active power (MW)"],
+                    p_min_pu = 0, #No hay restricción de potencia mínima para las renovables
+                    marginal_cost = 0, #El coste marginal para las renovables se considera nulo
+                    carrier= "AC")
+                grid.generators_t.p_max_pu[f"Wind{location}_g{n}"] = wind_profile.values
 
 def solve_opf(grid: pypsa.Network, solver_name) -> None:
     grid.optimize(solver_name=solver_name)
-
+"""
 def export_results(
-    n: pypsa.Network,
+    grid: pypsa.Network,
     out_path: str | Path,
     *,
     case_name: Optional[str] = None,
     include_prices: bool = True,
     include_debug: bool = False,
 ) -> Path:
-    """
+    
     Exporta resultados de PyPSA a un Excel de informe, con varias hojas ordenadas.
 
     Hojas que genera (si existen datos):
@@ -344,8 +352,8 @@ def export_results(
       - 60_Prices       (marginal prices por bus, si existe y include_prices)
       - 90_Debug        (opcional: tablas auxiliares)
 
-    Nota: crea un archivo NUEVO (no modifica tu Excel de inputs).
-    """
+    Nota: crea un archivo NUEVO.
+    
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -616,7 +624,150 @@ def export_results(
                 n.lines.to_excel(writer, sheet_name="90_Debug", startrow=r)
 
     return out_path
+"""
 
+def export_results(grid: pypsa.Network)-> None:
+    # Agrupamos todos los pwl de un mismo generador
+    cols_base = grid.generators_t.p.columns.str.replace(r'_seg\d+$', '', regex=True)
+    dispatch = grid.generators_t.p.T.groupby(cols_base).sum().T
+
+    dispatch["PV"] = dispatch[[c for c in dispatch.columns if "PV" in c]].sum(axis=1) #Agrupamos toda la generación fotovoltaica
+    dispatch["Wind"] = dispatch[[c for c in dispatch.columns if "Wind" in c]].sum(axis=1) #Agrupamos toda la generación eólica 
+    dispatch["Dispatch"] = dispatch[[c for c in dispatch.columns if "Dispatch" in c]].sum(axis=1) #Agrupamos todos los generadores despachables
+
+    battery_discharge = grid.storage_units_t.p.clip(lower=0).sum(axis=1) #Agrupamos las descargas de todas las baterías
+    battery_charge = grid.storage_units_t.p.clip(upper=0).sum(axis=1) #Agrupamos las cargas de todas las baterías
+
+    print(grid.storage_units_t.p)
+    
+    dispatch.insert(0, "battery_discharge", battery_discharge) #Incluimos en el dataframe del despacho la descarga de las baterías
+    dispatch.insert(1, "battery_charge", battery_charge) #Incluimos en el dataframe del despacho la carga de las baterías
+    dispatch["Grid_export"] = -dispatch["Grid_export"] #La exportación de energía a la red la tomamos como negativa
+
+    print(dispatch)
+
+
+    # Nos quedamos solo con las columnas agregadas que queremos mostrar
+    dispatch_clean = pd.DataFrame(index=dispatch.index)
+    dispatch_clean["PV"] = dispatch["PV"]
+    dispatch_clean["Wind"] = dispatch["Wind"]
+    dispatch_clean["battery_discharge"] = dispatch["battery_discharge"]
+    dispatch_clean["Dispatch"] = dispatch["Dispatch"]
+    dispatch_clean["Grid_import"] = dispatch["Grid_import"]
+    dispatch_clean["battery_charge"] = dispatch["battery_charge"]
+    dispatch_clean["Grid_export"] = dispatch["Grid_export"]
+
+    # Eliminamos columnas que sean todo ceros o casi todo ceros
+    dispatch_clean = dispatch_clean.loc[:, (dispatch_clean.abs() > 1e-6).any()]
+
+    # -----------------------------
+    # GRÁFICO DE DESPACHO ESCALONADO
+    # -----------------------------
+    fig, ax = plt.subplots(figsize=(14, 6))
+
+    # Orden recomendado
+    pos_cols = ["Dispatch", "PV", "Wind", "battery_discharge", "Grid_import"]
+    neg_cols = ["battery_charge", "Grid_export"]
+
+    # Dejamos solo las que existan realmente
+    pos_cols = [c for c in pos_cols if c in dispatch_clean.columns]
+    neg_cols = [c for c in neg_cols if c in dispatch_clean.columns]
+
+    # Colores
+    colors = {
+        "PV": "#FFD54F",
+        "Wind": "#4FC3F7",
+        "battery_discharge": "#66BB6A",
+        "Dispatch": "#E57373",
+        "Grid_import": "#B0BEC5",
+        "battery_charge": "#5C6BC0",
+        "Grid_export": "#424242"
+    }
+
+    # Apilado positivo
+    base_pos = pd.Series(0.0, index=dispatch_clean.index)
+    for col in pos_cols:
+        y = dispatch_clean[col]
+        ax.fill_between(
+            dispatch_clean.index,
+            base_pos,
+            base_pos + y,
+            step="post",
+            alpha=0.9,
+            label=col,
+            color=colors.get(col, None)
+        )
+        ax.step(
+            dispatch_clean.index,
+            base_pos + y,
+            where="post",
+            color=colors.get(col, None),
+            linewidth=1
+        )
+        base_pos = base_pos + y
+
+    # Apilado negativo
+    base_neg = pd.Series(0.0, index=dispatch_clean.index)
+    for col in neg_cols:
+        y = dispatch_clean[col]   # ya es negativo
+        ax.fill_between(
+            dispatch_clean.index,
+            base_neg,
+            base_neg + y,
+            step="post",
+            alpha=0.8,
+            label=col,
+            color=colors.get(col, None)
+        )
+        base_neg = base_neg + y
+
+    # Línea horizontal en cero
+    ax.axhline(0, color="black", linewidth=1)
+
+    # Título y etiquetas
+    ax.set_title("Dispatch")
+    ax.set_ylabel("Power [MW]")
+    ax.set_xlabel("Time")
+
+    # Formato del eje X
+    # Para un día: cada 2 h
+    # Para una semana: cada 12 h suele quedar bien
+    n_snapshots = len(dispatch_clean)
+
+    if n_snapshots <= 24:
+        ax.xaxis.set_major_locator(mdates.HourLocator(interval=2))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+    elif n_snapshots <= 24 * 7:
+        ax.xaxis.set_major_locator(mdates.DayLocator())
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+        ax.xaxis.set_minor_locator(mdates.HourLocator(interval=12))
+        ax.xaxis.set_minor_formatter(mdates.DateFormatter("%Hh"))
+        ax.tick_params(axis="x", which="major", pad=15)
+        ax.tick_params(axis="x", which="minor", pad=3)
+    else:
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=2))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+
+    # Leyenda
+    ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1))
+    plt.subplots_adjust(right=0.8, bottom=0.18)
+    plt.tight_layout()
+
+    # Guardamos figura
+    #plt.savefig("dispatch_plot.png", dpi=300, bbox_inches="tight")
+    #plt.close()
+    plt.show()
+
+    # -----------------------------
+    # EXPORTACIÓN A EXCEL
+    # -----------------------------
+    with pd.ExcelWriter("results.xlsx", engine="openpyxl") as writer:
+        dispatch_clean.round(2).to_excel(writer, sheet_name="dispatch")
+        grid.storage_units_t.p.round(2).to_excel(writer, sheet_name="battery_power")
+        grid.storage_units_t.state_of_charge.round(2).to_excel(writer, sheet_name="battery_soc")
+        grid.lines_t.p0.round(2).to_excel(writer, sheet_name="line_flows")
+        grid.buses_t.marginal_price.round(2).to_excel(writer, sheet_name="prices")
+   
 def drawGrid(grid: pypsa.Network):
     # convertir red PyPSA a grafo
     G = grid.graph()
@@ -655,9 +806,10 @@ def main():
     df_TS_PV_Profiles["time"] = pd.to_datetime(df_TS_PV_Profiles["time"]).dt.tz_localize(None)
     df_TS_PV_Profiles = df_TS_PV_Profiles.set_index("time")
 
-
+    
 
     grid = build_network(df_SYS_settings)
+
 
     add_buses(grid, df_Net_Buses)
     add_lines(grid, df_Net_Lines)
@@ -670,24 +822,18 @@ def main():
     grid_connection(grid, df_Grid_connection)
 
 
-    
-
-
 
     solver=str(df_SYS_settings.loc[2, "SYSTEM PARAMETERS"])
-    #solve_opf(grid, solver_name=solver)
+    solve_opf(grid, solver_name=solver)
     #print(grid.generators[["p_nom", "p_min_pu", "marginal_cost", "bus"]])
     #print(grid.storage_units[["p_nom", "max_hours", "bus", "efficiency_store", "efficiency_dispatch", "standing_loss", "state_of_charge_initial", "cyclic_state_of_charge", "marginal_cost"]])
     #print("\n")
     #print(grid.generators_t.p)
 
     #print(grid.objective)
-    #export_results(grid, "ExampleGrid_RESULTS.xlsx", case_name="ExampleGrid - Week", include_prices=True)
-
-    print(grid.generators_t.p_max_pu)
-
-    """"
-    print(grid.generators_t.p)
+    #export_results(grid, "ExampleGrid_RESULTS.xlsx", case_name="ExampleGrid", include_prices=True)
+    export_results(grid)
+    """
     print(grid.loads_t.p)
     print(grid.links_t.p0)
     print(grid.links_t.p1)
