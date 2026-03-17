@@ -37,7 +37,7 @@ def leerhojas(filename: str) -> dict:
     sheets["Net_Loads"] = pd.read_excel(
         filename,
         sheet_name="Net_Loads",
-        header=2
+        header=3
     ).iloc[:, 1:]
 
     # --- GEN DISPATCHABLE ---
@@ -82,6 +82,20 @@ def leerhojas(filename: str) -> dict:
         header=0
     ).iloc[:, 0:]
 
+    # --- TS ENERGY PRICES PROFILES ---
+    sheets["TS_Energy_Prices"] = pd.read_excel(
+        filename,
+        sheet_name="TS_Energy_Prices",
+        header=0
+    ).iloc[:, 0:]
+
+    # --- TS LOAD PROFILES ---
+    sheets["TS_LoadProfiles"] = pd.read_excel(
+        filename,
+        sheet_name="TS_LoadProfiles",
+        header=0
+    ).iloc[:, 0:]
+
     return sheets
 
 def add_storage_unit(grid: pypsa.Network, df_StorageUnit: pd.DataFrame) -> None:
@@ -114,7 +128,8 @@ def add_storage_unit(grid: pypsa.Network, df_StorageUnit: pd.DataFrame) -> None:
                     carrier = "AC",
                 )
             
-def grid_connection(grid: pypsa.Network, df_Grid_connection: pd.DataFrame) -> None:
+def grid_connection(grid: pypsa.Network, df_Grid_connection: pd.DataFrame, df_TS_Energy_Prices: pd.DataFrame, df_SYS_settings: pd.DataFrame) -> None:
+     
     grid.add(
         "Bus",
         "PCC",
@@ -144,7 +159,7 @@ def grid_connection(grid: pypsa.Network, df_Grid_connection: pd.DataFrame) -> No
         "Grid_import",
         bus="PCC",
         p_nom = df_Grid_connection.loc[0, "Import"],
-        marginal_cost = df_Grid_connection.loc[2, "Import"],
+        marginal_cost = df_Grid_connection.loc[2, "Import"], #Para OPF estático
         carrier="AC"
     )
     # Venta a red
@@ -153,10 +168,19 @@ def grid_connection(grid: pypsa.Network, df_Grid_connection: pd.DataFrame) -> No
         "Grid_export",
         bus="PCC",
         p_nom=df_Grid_connection.loc[0, "Export"],
-        marginal_cost = -df_Grid_connection.loc[2, "Export"],
+        marginal_cost = -df_Grid_connection.loc[2, "Export"]*df_Grid_connection.loc[2, "Import"], #Para OPF estático
+        #El coste marginal de exportación se da como porcentaje del coste marginal de importación
         sign=-1,
         carrier="AC"
     )
+
+    #Los perfiles de tiempo temporales reescriben los estáticos si se realiza un OPF multiperiodo
+    horizon = df_SYS_settings.loc[3, "SYSTEM PARAMETERS"]
+    if horizon != "Static":
+        price_profile = read_prices(df_SYS_settings, df_TS_Energy_Prices)
+        grid.generators_t.marginal_cost["Grid_import"] = price_profile
+        grid.generators_t.marginal_cost["Grid_export"] = -price_profile*df_Grid_connection.loc[2, "Export"] #El coste marginal de exportación 
+        #se da como porcentaje del coste marginal de importación
 
 def build_network(df_SYS_settings: pd.DataFrame) -> pypsa.Network:
     grid = pypsa.Network()
@@ -230,9 +254,40 @@ def add_dispatchable_generators(grid: pypsa.Network, df_Gen_Dispatchable: pd.Dat
                 carrier="AC",
             )
 
-def add_loads(grid: pypsa.Network, df_Net_Loads: pd.DataFrame, df_SYS_settings: pd.DataFrame) -> None:
+def load_profile_reader(df_TS_LoadProfiles: pd.DataFrame, df_SYS_settings: pd.DataFrame, load_profile_type)-> pd.Series:
+    start_Date = pd.to_datetime(df_SYS_settings.loc[5, "SYSTEM PARAMETERS"])
+    horizon = df_SYS_settings.loc[3, "SYSTEM PARAMETERS"]
+
+    if horizon == "Day":
+        df = df_TS_LoadProfiles.loc[start_Date:].iloc[:24]
+        return df.loc[:, load_profile_type]
+
+    elif horizon == "Static":
+        return pd.Series([1])
+
+    elif horizon == "Week":
+        df = df_TS_LoadProfiles.loc[start_Date:].iloc[:168]
+        return df.loc[:, load_profile_type]
+    
+  
+
+def add_loads(grid: pypsa.Network, df_Net_Loads: pd.DataFrame, df_SYS_settings: pd.DataFrame, df_TS_LoadProfiles: pd.DataFrame) -> None:
     df_Net_Loads["Loss factor (%)"] = pd.to_numeric(df_Net_Loads["Loss factor (%)"], errors="coerce").fillna(0)
+
     for n in range(df_Net_Loads["Active power demand (MW)"].last_valid_index() + 1):
+        
+        if df_Net_Loads.loc[n, "Time series load profile"] == "Residencial (P2.0TD)":
+            load_profile_type = "COEF. PERFIL P2.0TD"
+        elif df_Net_Loads.loc[n, "Time series load profile"] == "Commercial / Industrial (P3.0TD)":
+            load_profile_type = "COEF. PERFIL P3.0TD"
+        elif df_Net_Loads.loc[n, "Time series load profile"] == "Electric vehicle (P3.0TDVE)":
+            load_profile_type = "COEF. PERFIL P3.0TDVE"
+        elif df_Net_Loads.loc[n, "Time series load profile"] == "Flat load profile":
+            load_profile_type = "Flat LP"
+
+        AnnualConsumption = df_Net_Loads.loc[n, "Annual energy consumption (MWh/year)"]
+        load_profile_MW = load_profile_reader(df_TS_LoadProfiles, df_SYS_settings, load_profile_type) * AnnualConsumption
+
         location = df_Net_Loads.loc[n, "LOAD LOCATION"]
         Pd = df_Net_Loads.loc[n, "Active power demand (MW)"]
         Ploss = df_Net_Loads.loc[n, "Loss factor (%)"]
@@ -241,6 +296,8 @@ def add_loads(grid: pypsa.Network, df_Net_Loads: pd.DataFrame, df_SYS_settings: 
             grid.add("Load", f"Load_node_{location}_L{n}",  #L{n} permite distinguir cargas del mismo nodo
                     bus=f"Bus_node_{location}", 
                     p_set=Pd*(1+Ploss), carrier="AC")
+            
+            grid.loads_t.p_set.loc[:, f"Load_node_{location}_L{n}"] = load_profile_MW
             
             use_shed = int(df_SYS_settings.loc[1, "SYSTEM PARAMETERS"]) == 1
             if use_shed:
@@ -268,8 +325,26 @@ def add_lines(grid: pypsa.Network, df_Net_Lines: pd.DataFrame) -> None:
             carrier="AC"
         )
 
+def read_prices(df_SYS_settings: pd.DataFrame,
+                df_TS_Energy_Prices: pd.DataFrame) -> pd.Series:
+
+    start_Date = pd.to_datetime(df_SYS_settings.loc[5, "SYSTEM PARAMETERS"])
+    horizon = df_SYS_settings.loc[3, "SYSTEM PARAMETERS"]
+
+    if horizon == "Day":
+        df = df_TS_Energy_Prices.loc[start_Date:].iloc[:24]
+        return df["Precio mercado SPOT Diario España (€/MWh)"]
+
+    elif horizon == "Static":
+        return pd.Series([1])
+
+    elif horizon == "Week":
+        df = df_TS_Energy_Prices.loc[start_Date:].iloc[:168]
+        return df["Precio mercado SPOT Diario España (€/MWh)"]
+
 def wind_series_reader(df_SYS_settings: pd.DataFrame,
                             df_TS_Wind_Profiles: pd.DataFrame) -> pd.Series:
+    
     region = str(df_SYS_settings.loc[4, "SYSTEM PARAMETERS"])
     start_Date = pd.to_datetime(df_SYS_settings.loc[5, "SYSTEM PARAMETERS"])
 
@@ -330,301 +405,6 @@ def add_renewable_generator(grid: pypsa.Network, df_Gen_Renewable: pd.DataFrame,
 
 def solve_opf(grid: pypsa.Network, solver_name) -> None:
     grid.optimize(solver_name=solver_name)
-"""
-def export_results(
-    grid: pypsa.Network,
-    out_path: str | Path,
-    *,
-    case_name: Optional[str] = None,
-    include_prices: bool = True,
-    include_debug: bool = False,
-) -> Path:
-    
-    Exporta resultados de PyPSA a un Excel de informe, con varias hojas ordenadas.
-
-    Hojas que genera (si existen datos):
-      - 00_Summary      (KPIs y metadatos)
-      - 10_Balance      (carga, generación, storage neto, ENS, etc.)
-      - 20_Dispatch     (potencias de generadores por snapshot)
-      - 30_Renewables   (gen renovable + curtailment si hay p_max_pu)
-      - 40_LineFlows    (flujos por línea y % loading si hay s_nom)
-      - 50_Storage      (p, SOC si existe storage_units)
-      - 60_Prices       (marginal prices por bus, si existe y include_prices)
-      - 90_Debug        (opcional: tablas auxiliares)
-
-    Nota: crea un archivo NUEVO.
-    
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # ---------- helpers ----------
-    def _safe_df(x) -> Optional[pd.DataFrame]:
-        if x is None:
-            return None
-        if isinstance(x, pd.Series):
-            return x.to_frame()
-        if isinstance(x, (pd.DataFrame,)):
-            return x
-        # escalar
-        return pd.DataFrame({"value": [x]})
-
-    def _has(attr: str) -> bool:
-        try:
-            obj = getattr(n, attr)
-            return obj is not None
-        except Exception:
-            return False
-
-    snapshots = pd.Index(n.snapshots, name="snapshot")
-
-    # ---------- KPIs ----------
-    kpi_rows = []
-
-    # Objective / cost (si has corrido lopf/opf)
-    obj = getattr(n, "objective", None)
-    if obj is not None:
-        kpi_rows.append(("objective", float(obj), "€ (si tus costes están en €)"))
-
-    # Total load energy (MWh) si snapshots son horarias (o ponderadas)
-    # Usamos snapshot_weightings si existe; si no, peso=1
-    if hasattr(n, "snapshot_weightings") and "objective" in n.snapshot_weightings.columns:
-        w = n.snapshot_weightings["objective"].reindex(snapshots).fillna(1.0)
-    elif hasattr(n, "snapshot_weightings") and "generators" in n.snapshot_weightings.columns:
-        w = n.snapshot_weightings["generators"].reindex(snapshots).fillna(1.0)
-    else:
-        w = pd.Series(1.0, index=snapshots, name="weight")
-
-    # Load (p_set o p) por snapshot
-    load_ts = None
-    if hasattr(n, "loads_t") and hasattr(n.loads_t, "p_set") and len(getattr(n, "loads", [])) > 0:
-        load_ts = n.loads_t.p_set.reindex(snapshots)
-    elif hasattr(n, "loads_t") and hasattr(n.loads_t, "p") and len(getattr(n, "loads", [])) > 0:
-        load_ts = n.loads_t.p.reindex(snapshots)
-
-    if load_ts is not None and not load_ts.empty:
-        total_load_mwh = (load_ts.sum(axis=1) * w).sum()
-        peak_load_mw = load_ts.sum(axis=1).max()
-        kpi_rows += [
-            ("total_load_energy", float(total_load_mwh), "MWh (según ponderación)"),
-            ("peak_load", float(peak_load_mw), "MW"),
-        ]
-
-    # Generator dispatch
-    gen_p = None
-    if hasattr(n, "generators_t") and hasattr(n.generators_t, "p") and len(getattr(n, "generators", [])) > 0:
-        gen_p = n.generators_t.p.reindex(snapshots)
-
-    if gen_p is not None and not gen_p.empty:
-        total_gen_mwh = (gen_p.sum(axis=1) * w).sum()
-        kpi_rows.append(("total_generation", float(total_gen_mwh), "MWh (según ponderación)"))
-
-    # Storage
-    su_p = None
-    su_soc = None
-    if hasattr(n, "storage_units_t") and len(getattr(n, "storage_units", [])) > 0:
-        if hasattr(n.storage_units_t, "p"):
-            su_p = n.storage_units_t.p.reindex(snapshots)
-        if hasattr(n.storage_units_t, "state_of_charge"):
-            su_soc = n.storage_units_t.state_of_charge.reindex(snapshots)
-
-    # Load shedding (si modelas un generador/elemento de shed; aquí detectamos por nombre típico)
-    # Si tienes una convención distinta, puedes ajustar este bloque.
-    ens_mwh = None
-    if gen_p is not None and not gen_p.empty:
-        shed_cols = [c for c in gen_p.columns if str(c).lower().find("shed") >= 0]
-        if shed_cols:
-            ens_mwh = ((gen_p[shed_cols].sum(axis=1) * w).sum())
-            kpi_rows.append(("energy_not_served_ENS", float(ens_mwh), "MWh"))
-
-    # Curtailment renovable (si existe p_max_pu)
-    curtail_mwh = None
-    if gen_p is not None and hasattr(n.generators_t, "p_max_pu") and hasattr(n, "generators"):
-        p_max_pu = n.generators_t.p_max_pu.reindex(snapshots)
-        # capacidad nominal
-        p_nom = n.generators.p_nom.reindex(gen_p.columns).fillna(0.0)
-        available = p_max_pu.mul(p_nom, axis=1)
-        common = [c for c in gen_p.columns if c in available.columns]
-        if common:
-            curtail = (available[common] - gen_p[common]).clip(lower=0.0)
-            curtail_mwh = (curtail.sum(axis=1) * w).sum()
-            kpi_rows.append(("renewable_curtailment", float(curtail_mwh), "MWh"))
-
-    summary_df = pd.DataFrame(kpi_rows, columns=["KPI", "Value", "Unit"])
-    if case_name:
-        meta_top = pd.DataFrame(
-            {
-                "Field": ["case_name", "n_snapshots"],
-                "Value": [case_name, int(len(snapshots))],
-            }
-        )
-    else:
-        meta_top = pd.DataFrame(
-            {
-                "Field": ["n_snapshots"],
-                "Value": [int(len(snapshots))],
-            }
-        )
-
-    # ---------- Balance ----------
-    # Construimos una tabla por snapshot: Load, Gen, Storage_net (descarga positiva), ENS, etc.
-    balance = pd.DataFrame(index=snapshots)
-
-    if load_ts is not None and not load_ts.empty:
-        balance["load_MW"] = load_ts.sum(axis=1)
-
-    if gen_p is not None and not gen_p.empty:
-        balance["generation_MW"] = gen_p.sum(axis=1)
-
-    if su_p is not None and not su_p.empty:
-        # en PyPSA: storage_units_t.p >0 suele ser descarga a la red, <0 carga (según convención)
-        balance["storage_net_MW"] = su_p.sum(axis=1)
-
-    if ens_mwh is not None:
-        # ENS por snapshot (MW) si existe shedding
-        shed_cols = [c for c in gen_p.columns if str(c).lower().find("shed") >= 0]
-        balance["load_shedding_MW"] = gen_p[shed_cols].sum(axis=1)
-
-    if curtail_mwh is not None:
-        # curtailment por snapshot (MW)
-        curtail_cols = None
-        try:
-            curtail_cols = curtail.columns  # type: ignore[name-defined]
-        except Exception:
-            curtail_cols = None
-        if curtail_cols is not None:
-            balance["curtailment_MW"] = curtail.sum(axis=1)  # type: ignore[name-defined]
-
-    # ---------- Dispatch ----------
-    dispatch_df = None
-    if gen_p is not None and not gen_p.empty:
-        dispatch_df = gen_p.copy()
-        dispatch_df.index.name = "snapshot"
-
-    # ---------- Renewables ----------
-    renew_df = None
-    if gen_p is not None and not gen_p.empty:
-        # Heurística: renovables = control no importa; mejor por carrier si está definido
-        if hasattr(n, "generators") and "carrier" in n.generators.columns:
-            ren_mask = n.generators["carrier"].astype(str).str.lower().isin(
-                ["pv", "solar", "wind", "onwind", "offwind", "ror", "hydro", "renewable"]
-            )
-            ren_gens = n.generators.index[ren_mask].intersection(gen_p.columns)
-            if len(ren_gens) > 0:
-                renew_df = gen_p[ren_gens].copy()
-        # Si no hay carrier, no forzamos.
-
-    # Curtailment detallado si existe
-    curtail_detail = None
-    if gen_p is not None and hasattr(n.generators_t, "p_max_pu") and hasattr(n, "generators"):
-        p_max_pu = n.generators_t.p_max_pu.reindex(snapshots)
-        p_nom = n.generators.p_nom.reindex(gen_p.columns).fillna(0.0)
-        available = p_max_pu.mul(p_nom, axis=1)
-        common = [c for c in gen_p.columns if c in available.columns]
-        if common:
-            curtail_detail = (available[common] - gen_p[common]).clip(lower=0.0)
-            curtail_detail.index.name = "snapshot"
-
-    # ---------- Line flows ----------
-    lineflows_df = None
-    lineload_df = None
-    if hasattr(n, "lines_t") and hasattr(n.lines_t, "p0") and len(getattr(n, "lines", [])) > 0:
-        lineflows_df = n.lines_t.p0.reindex(snapshots).copy()
-        lineflows_df.index.name = "snapshot"
-
-        # % loading si hay s_nom
-        if hasattr(n, "lines") and "s_nom" in n.lines.columns:
-            s_nom = n.lines.s_nom.reindex(lineflows_df.columns).replace(0, pd.NA)
-            lineload_df = (lineflows_df.abs().div(s_nom, axis=1) * 100.0)
-            lineload_df.index.name = "snapshot"
-
-    # ---------- Storage ----------
-    storage_p_df = None
-    storage_soc_df = None
-    if su_p is not None and not su_p.empty:
-        storage_p_df = su_p.copy()
-        storage_p_df.index.name = "snapshot"
-    if su_soc is not None and not su_soc.empty:
-        storage_soc_df = su_soc.copy()
-        storage_soc_df.index.name = "snapshot"
-
-    # ---------- Prices ----------
-    prices_df = None
-    if include_prices and hasattr(n, "buses_t") and hasattr(n.buses_t, "marginal_price"):
-        mp = n.buses_t.marginal_price.reindex(snapshots)
-        if mp is not None and not mp.empty:
-            prices_df = mp.copy()
-            prices_df.index.name = "snapshot"
-
-    # ---------- Write Excel ----------
-    with pd.ExcelWriter(out_path, engine="openpyxl", mode="w") as writer:
-        # 00 Summary: metadatos + KPIs
-        meta_top.to_excel(writer, sheet_name="00_Summary", index=False, startrow=0)
-        summary_df.to_excel(writer, sheet_name="00_Summary", index=False, startrow=len(meta_top) + 2)
-
-        # 10 Balance
-        if not balance.empty:
-            balance.to_excel(writer, sheet_name="10_Balance")
-
-        # 20 Dispatch
-        if dispatch_df is not None and not dispatch_df.empty:
-            dispatch_df.to_excel(writer, sheet_name="20_Dispatch")
-
-        # 30 Renewables
-        if renew_df is not None and not renew_df.empty:
-            renew_df.to_excel(writer, sheet_name="30_Renewables", startrow=0)
-            if curtail_detail is not None and not curtail_detail.empty:
-                # pegamos curtailment debajo, con un título
-                start = len(renew_df) + 3
-                pd.DataFrame({"NOTE": ["Curtailment (available - dispatched), MW"]}).to_excel(
-                    writer, sheet_name="30_Renewables", index=False, startrow=start
-                )
-                curtail_detail.to_excel(writer, sheet_name="30_Renewables", startrow=start + 2)
-        elif curtail_detail is not None and not curtail_detail.empty:
-            curtail_detail.to_excel(writer, sheet_name="30_Renewables")
-
-        # 40 Line flows
-        if lineflows_df is not None and not lineflows_df.empty:
-            lineflows_df.to_excel(writer, sheet_name="40_LineFlows", startrow=0)
-            if lineload_df is not None and not lineload_df.empty:
-                start = len(lineflows_df) + 3
-                pd.DataFrame({"NOTE": ["Line loading (%), based on |p0| / s_nom * 100"]}).to_excel(
-                    writer, sheet_name="40_LineFlows", index=False, startrow=start
-                )
-                lineload_df.to_excel(writer, sheet_name="40_LineFlows", startrow=start + 2)
-
-        # 50 Storage
-        if (storage_p_df is not None and not storage_p_df.empty) or (storage_soc_df is not None and not storage_soc_df.empty):
-            sheet = "50_Storage"
-            r = 0
-            if storage_p_df is not None and not storage_p_df.empty:
-                pd.DataFrame({"NOTE": ["Storage power p (MW). Sign convention: >0 discharge to grid, <0 charge (typical in PyPSA)."]}).to_excel(
-                    writer, sheet_name=sheet, index=False, startrow=r
-                )
-                storage_p_df.to_excel(writer, sheet_name=sheet, startrow=r + 2)
-                r = r + 2 + len(storage_p_df) + 3
-            if storage_soc_df is not None and not storage_soc_df.empty:
-                pd.DataFrame({"NOTE": ["State of charge (MWh)"]}).to_excel(
-                    writer, sheet_name=sheet, index=False, startrow=r
-                )
-                storage_soc_df.to_excel(writer, sheet_name=sheet, startrow=r + 2)
-
-        # 60 Prices
-        if prices_df is not None and not prices_df.empty:
-            prices_df.to_excel(writer, sheet_name="60_Prices")
-
-        # 90 Debug (opcional)
-        if include_debug:
-            # ejemplo: exportar tablas estáticas relevantes
-            if hasattr(n, "generators") and len(n.generators) > 0:
-                n.generators.to_excel(writer, sheet_name="90_Debug", startrow=0)
-                r = len(n.generators) + 3
-            else:
-                r = 0
-            if hasattr(n, "lines") and len(getattr(n, "lines", [])) > 0:
-                n.lines.to_excel(writer, sheet_name="90_Debug", startrow=r)
-
-    return out_path
-"""
 
 def export_results(grid: pypsa.Network)-> None:
     # Agrupamos todos los pwl de un mismo generador
@@ -806,33 +586,43 @@ def main():
     df_TS_PV_Profiles["time"] = pd.to_datetime(df_TS_PV_Profiles["time"]).dt.tz_localize(None)
     df_TS_PV_Profiles = df_TS_PV_Profiles.set_index("time")
 
+    df_TS_Energy_Prices = data["TS_Energy_Prices"]
+    df_TS_Energy_Prices["time"] = pd.to_datetime(df_TS_Energy_Prices["time"]).dt.tz_localize(None)
+    df_TS_Energy_Prices = df_TS_Energy_Prices.set_index("time")
     
+    df_TS_LoadProfiles = data["TS_LoadProfiles"]
+    df_TS_LoadProfiles["time"] = pd.to_datetime(df_TS_LoadProfiles["time"]).dt.tz_localize(None)
+    df_TS_LoadProfiles = df_TS_LoadProfiles.set_index("time")
+
 
     grid = build_network(df_SYS_settings)
 
-
     add_buses(grid, df_Net_Buses)
     add_lines(grid, df_Net_Lines)
-    add_loads(grid, df_Net_Loads, df_SYS_settings) #Puesto que incluimos los generadores VOLL allí donde haya cargas 
+    add_loads(grid, df_Net_Loads, df_SYS_settings, df_TS_LoadProfiles) #Puesto que incluimos los generadores VOLL allí donde haya cargas 
     #la función add_loads debe recibir también df_SYS_settings para leer el VOLL en €/MWh introducido por el usuario
 
     add_dispatchable_generators(grid, df_Gen_Dispatchable)
     add_renewable_generator(grid, df_Gen_Renewable, df_SYS_settings, df_TS_Wind_Profiles, df_TS_PV_Profiles)
     add_storage_unit(grid, df_StorageUnit)
-    grid_connection(grid, df_Grid_connection)
+    grid_connection(grid, df_Grid_connection, df_TS_Energy_Prices, df_SYS_settings)
 
 
+
+    print(grid.loads_t.p_set.head(168))
 
     solver=str(df_SYS_settings.loc[2, "SYSTEM PARAMETERS"])
     solve_opf(grid, solver_name=solver)
+
     #print(grid.generators[["p_nom", "p_min_pu", "marginal_cost", "bus"]])
     #print(grid.storage_units[["p_nom", "max_hours", "bus", "efficiency_store", "efficiency_dispatch", "standing_loss", "state_of_charge_initial", "cyclic_state_of_charge", "marginal_cost"]])
     #print("\n")
     #print(grid.generators_t.p)
 
     #print(grid.objective)
-    #export_results(grid, "ExampleGrid_RESULTS.xlsx", case_name="ExampleGrid", include_prices=True)
+    
     export_results(grid)
+
     """
     print(grid.loads_t.p)
     print(grid.links_t.p0)
