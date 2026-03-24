@@ -713,6 +713,7 @@ def plot_total_soc_figure(grid, horizon: str = "Multiperiod"):
 
     return fig
 
+
 def plot_soc_per_battery_figure(grid, horizon: str = "Multiperiod"):
     """
     Devuelve la figura del SOC separado por baterías.
@@ -764,6 +765,192 @@ def plot_soc_per_battery_figure(grid, horizon: str = "Multiperiod"):
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
 
     ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1))
+    ax.grid(True, axis="y")
+    fig.tight_layout()
+
+    return fig
+
+
+def plot_soc_per_battery_daily_average_figure(grid, horizon: str = "Multiperiod"):
+    """
+    Devuelve la figura del SOC medio diario separado por baterías.
+    """
+
+    if horizon != "Multiperiod":
+        return None
+
+    soc = grid.storage_units_t.state_of_charge.copy()
+
+    if soc.empty:
+        return None
+
+    # Media diaria por batería
+    soc_daily = soc.resample("D").mean()
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+
+    for battery_name in soc_daily.columns:
+        ax.plot(soc_daily.index, soc_daily[battery_name], label=battery_name)
+
+    # Línea de capacidad máxima por batería si existe
+    for battery_name in soc_daily.columns:
+        if battery_name in grid.storage_units.index:
+            p_nom = grid.storage_units.loc[battery_name, "p_nom"]
+            max_hours = grid.storage_units.loc[battery_name, "max_hours"]
+            capacity = p_nom * max_hours
+            ax.axhline(
+                y=capacity,
+                linestyle="--",
+                linewidth=1,
+                alpha=0.5
+            )
+
+    ax.set_xlabel("Time")
+    ax.set_ylabel("State of charge [MWh]")
+    ax.set_title("Battery SOC by unit (daily average)")
+
+    n_days = len(soc_daily)
+
+    if n_days <= 14:
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+
+    elif n_days <= 90:
+        ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+
+    else:
+        interval = max(1, int(n_days / 14))
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=interval))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b\n%Y"))
+
+    ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1))
+    ax.grid(True, axis="y")
+    fig.tight_layout()
+
+    return fig
+
+
+def plot_total_soc_daily_stats_figure(grid, horizon: str = "Multiperiod"):
+    """
+    Devuelve la figura del SOC total con:
+    - media diaria
+    - mínimo diario
+    - máximo diario
+    - banda sombreada min-max
+    """
+
+    if horizon != "Multiperiod":
+        return None
+
+    soc = grid.storage_units_t.state_of_charge.copy()
+    soc_total = soc.sum(axis=1)
+
+    soc_daily_mean = soc_total.resample("D").mean()
+    soc_daily_min = soc_total.resample("D").min()
+    soc_daily_max = soc_total.resample("D").max()
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+
+    # Banda min-max
+    ax.fill_between(
+        soc_daily_mean.index,
+        soc_daily_min.values,
+        soc_daily_max.values,
+        alpha=0.25,
+        label="Daily min-max range"
+    )
+
+    # Curvas
+    ax.plot(soc_daily_mean.index, soc_daily_mean.values, linewidth=2, label="Daily mean SOC")
+    ax.plot(soc_daily_min.index, soc_daily_min.values, linestyle="--", linewidth=1.2, label="Daily minimum SOC")
+    ax.plot(soc_daily_max.index, soc_daily_max.values, linestyle="--", linewidth=1.2, label="Daily maximum SOC")
+
+    capacity = (grid.storage_units["p_nom"] * grid.storage_units["max_hours"]).sum()
+    ax.axhline(y=capacity, linestyle="--", color="red", label="Max capacity")
+
+    ax.set_xlabel("Time")
+    ax.set_ylabel("State of charge [MWh]")
+    ax.set_title("Total battery SOC (daily statistics)")
+
+    n_days = len(soc_daily_mean)
+
+    if n_days <= 14:
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+
+    elif n_days <= 90:
+        ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+
+    else:
+        interval = max(1, int(n_days / 14))
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=interval))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b\n%Y"))
+
+    ax.legend()
+    ax.grid(True, axis="y")
+    fig.tight_layout()
+
+    return fig
+
+def plot_total_soc_weekly_stats_figure(grid, horizon: str = "Multiperiod"):
+    """
+    Devuelve la figura del SOC total con:
+    - media semanal
+    - mínimo semanal
+    - máximo semanal
+    - banda sombreada min-max
+    """
+
+    if horizon != "Multiperiod":
+        return None
+
+    soc = grid.storage_units_t.state_of_charge.copy()
+    soc_total = soc.sum(axis=1)
+
+    soc_weekly_mean = soc_total.resample("W").mean()
+    soc_weekly_min = soc_total.resample("W").min()
+    soc_weekly_max = soc_total.resample("W").max()
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+
+    # Banda min-max
+    ax.fill_between(
+        soc_weekly_mean.index,
+        soc_weekly_min.values,
+        soc_weekly_max.values,
+        alpha=0.25,
+        label="Weekly min-max range"
+    )
+
+    # Curvas
+    ax.plot(soc_weekly_mean.index, soc_weekly_mean.values, linewidth=2, label="Weekly mean SOC")
+    ax.plot(soc_weekly_min.index, soc_weekly_min.values, linestyle="--", linewidth=1.2, label="Weekly minimum SOC")
+    ax.plot(soc_weekly_max.index, soc_weekly_max.values, linestyle="--", linewidth=1.2, label="Weekly maximum SOC")
+
+    capacity = (grid.storage_units["p_nom"] * grid.storage_units["max_hours"]).sum()
+    ax.axhline(y=capacity, linestyle="--", color="red", label="Max capacity")
+
+    ax.set_xlabel("Time")
+    ax.set_ylabel("State of charge [MWh]")
+    ax.set_title("Total battery SOC (weekly statistics)")
+
+    n_weeks = len(soc_weekly_mean)
+
+    if n_weeks <= 12:
+        ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+
+    elif n_weeks <= 52:
+        ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=4))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b\n%Y"))
+
+    else:
+        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%b\n%Y"))
+
+    ax.legend()
     ax.grid(True, axis="y")
     fig.tight_layout()
 
@@ -902,11 +1089,13 @@ def export_results(grid: pypsa.Network, df_SYS_settings: pd.DataFrame)-> None:
     
     # GRÁFICO DE DESPACHO ESCALONADO SOLO PARA OPF MULTIPERIODO
 
-    dispatch_graph_resolution_choice(df_SYS_settings, dispatch_clean)
+    #dispatch_graph_resolution_choice(df_SYS_settings, dispatch_clean)
     # GRÁFICO DE SOC DE TODAS LAS BATERÍAS SUMADAS
     plot_total_soc_figure(grid)
+    plot_total_soc_daily_stats_figure(grid)
+    plot_total_soc_weekly_stats_figure(grid)
     # GRÁFICO DE SOC DE CADA BATERÍA
-    #plot_soc_per_battery_figure(grid)
+    plot_soc_per_battery_daily_average_figure(grid)
     plt.show()
     # GRÁFICO DE DESPACHO TIPO SANKEY 
     #fig3 = plot_energy_balance_sankey(dispatch_clean, grid)
