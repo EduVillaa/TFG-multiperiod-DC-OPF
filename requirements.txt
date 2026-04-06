@@ -1,0 +1,8 @@
+pandas>=2.0
+pypsa
+matplotlib
+openpyxl
+PySide6
+highspy
+networkx
+plotly
