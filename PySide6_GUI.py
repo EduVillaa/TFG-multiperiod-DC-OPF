@@ -72,7 +72,7 @@ class MainWindow(QWidget):
 
         self.duration_input = QSpinBox()
         self.duration_input.setRange(1, 3650)
-        self.duration_input.setValue(40)
+        self.duration_input.setValue(14)
         self.duration_input.setSuffix(" días")
 
         self.resolution_combo = QComboBox()
