@@ -28,14 +28,6 @@ from Network_builder.Storage.storage_model import add_storage_as_store_links
 def leerhojas(filename: str | Path) -> dict:
     sheets = {}
     
-    sheets["SYS_settings"] = pd.read_excel(
-        filename,
-        sheet_name="SYS_settings",
-        index_col=0,
-        header=1,
-        usecols="B:C",
-    )
-    
     sheets["Net_Buses"] = pd.read_excel(
         filename,
         sheet_name="Net_Buses",
@@ -104,9 +96,31 @@ def leerhojas(filename: str | Path) -> dict:
 
     return sheets
 
-def apply_gui_system_parameters(df_SYS_settings: pd.DataFrame, gui_params: dict) -> pd.DataFrame:
-    for key, value in gui_params.items():
-        df_SYS_settings.loc[key, "SYSTEM PARAMETERS"] = value
+def build_sys_settings_from_gui(gui_params: dict) -> pd.DataFrame:
+    required_keys = [
+        "VOLL (€/MWh)",
+        "Static / Multiperiod",
+        "Region",
+        "Start date (dd/mm/aaaa)",
+        "Simulation duration (days)",
+        "Graph resolution",
+    ]
+
+    missing = [k for k in required_keys if k not in gui_params]
+    if missing:
+        raise KeyError(f"Faltan parámetros de la GUI: {missing}")
+
+    df_SYS_settings = pd.DataFrame({
+        "SYSTEM PARAMETERS": pd.Series({
+            "VOLL (€/MWh)": float(gui_params["VOLL (€/MWh)"]),
+            "Static / Multiperiod": gui_params["Static / Multiperiod"],
+            "Region": gui_params["Region"],
+            "Start date (dd/mm/aaaa)": pd.to_datetime(gui_params["Start date (dd/mm/aaaa)"]),
+            "Simulation duration (days)": int(gui_params["Simulation duration (days)"]),
+            "Graph resolution": gui_params["Graph resolution"],
+        })
+    })
+
     return df_SYS_settings
 
 def solve_opf(grid: pypsa.Network, solver_name: str, battery_specs) -> None:
@@ -144,12 +158,12 @@ def run_program(
         raise FileNotFoundError(f"No se encontró el archivo de entrada: {input_path}")
 
     data = leerhojas(input_path)
-    df_SYS_settings = data["SYS_settings"]
 
-    if system_parameters is not None:
-        df_SYS_settings = apply_gui_system_parameters(df_SYS_settings, system_parameters)
+    if system_parameters is None:
+        raise ValueError("No se han recibido los parámetros del sistema desde la GUI.")
 
-    #df_SYS_settings = data["SYS_settings"]
+    df_SYS_settings = build_sys_settings_from_gui(system_parameters)
+
     df_Net_Buses = data["Net_Buses"]
     df_Net_Lines = data["Net_Lines"]
     df_Net_Loads = data["Net_Loads"]
