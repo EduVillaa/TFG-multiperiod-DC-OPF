@@ -192,6 +192,9 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
     - buses normales
     - buses de storage
     - PCC
+
+    Esta versión NO usa grid.plot(), para evitar errores de PyPSA
+    con pandas StringDtype en algunos entornos.
     """
 
     # -----------------------------
@@ -199,13 +202,11 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
     # -----------------------------
     G = grid.graph()
     pos = nx.spring_layout(G, seed=42)
-    # pos = nx.kamada_kawai_layout(G)
-    # pos = nx.circular_layout(G)
 
     for bus in grid.buses.index:
         if bus in pos:
-            grid.buses.loc[bus, "x"] = pos[bus][0]
-            grid.buses.loc[bus, "y"] = pos[bus][1]
+            grid.buses.loc[bus, "x"] = float(pos[bus][0])
+            grid.buses.loc[bus, "y"] = float(pos[bus][1])
 
     bus_names = list(grid.buses.index)
 
@@ -213,7 +214,7 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
     # 2. Clasificar buses
     # -----------------------------
     if not grid.stores.empty and "bus" in grid.stores.columns:
-        storage_buses = set(grid.stores["bus"].dropna())
+        storage_buses = set(grid.stores["bus"].dropna().astype(str))
     else:
         storage_buses = set()
 
@@ -222,40 +223,83 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
     else:
         pcc_buses = {bus for bus in bus_names if "PCC" in str(bus).upper()}
 
-    normal_buses = set(bus_names) - storage_buses - pcc_buses
+    normal_buses = set(map(str, bus_names)) - storage_buses - set(map(str, pcc_buses))
 
     # -----------------------------
-    # 3. Colores y tamaños por bus
-    # -----------------------------
-    bus_colors = []
-    bus_sizes = []
-
-    for bus in grid.buses.index:
-        if bus in pcc_buses:
-            bus_colors.append("#C00000")   # rojo
-            bus_sizes.append(0.010)        # más grande
-        elif bus in storage_buses:
-            bus_colors.append("#70AD47")   # verde
-            bus_sizes.append(0.007)        # un poco más pequeño
-        else:
-            bus_colors.append("#4F81BD")   # azul
-            bus_sizes.append(0.0085)       # normal
-
-    # -----------------------------
-    # 4. Dibujar red
+    # 3. Crear figura
     # -----------------------------
     fig, ax = plt.subplots(figsize=(11.5, 8))
 
-    grid.plot(
-        ax=ax,
-        bus_sizes=bus_sizes,
-        bus_colors=bus_colors,
-        line_colors="gray",
-        link_colors="orange"
-    )
+    # -----------------------------
+    # 4. Dibujar líneas
+    # -----------------------------
+    if not grid.lines.empty:
+        for _, row in grid.lines.iterrows():
+            bus0 = row["bus0"]
+            bus1 = row["bus1"]
+
+            if bus0 in pos and bus1 in pos:
+                x0, y0 = pos[bus0]
+                x1, y1 = pos[bus1]
+
+                ax.plot(
+                    [x0, x1],
+                    [y0, y1],
+                    color="gray",
+                    linewidth=1.8,
+                    zorder=1
+                )
 
     # -----------------------------
-    # 5. Etiquetas
+    # 5. Dibujar links
+    # -----------------------------
+    if hasattr(grid, "links") and not grid.links.empty:
+        for _, row in grid.links.iterrows():
+            bus0 = row["bus0"]
+            bus1 = row["bus1"]
+
+            if bus0 in pos and bus1 in pos:
+                x0, y0 = pos[bus0]
+                x1, y1 = pos[bus1]
+
+                ax.plot(
+                    [x0, x1],
+                    [y0, y1],
+                    color="orange",
+                    linewidth=2.2,
+                    linestyle="--",
+                    zorder=2
+                )
+
+    # -----------------------------
+    # 6. Dibujar buses manualmente
+    # -----------------------------
+    for bus in grid.buses.index:
+        x = float(grid.buses.loc[bus, "x"])
+        y = float(grid.buses.loc[bus, "y"])
+
+        if bus in pcc_buses:
+            color = "#C00000"
+            size = 220
+        elif str(bus) in storage_buses:
+            color = "#70AD47"
+            size = 170
+        else:
+            color = "#4F81BD"
+            size = 190
+
+        ax.scatter(
+            x,
+            y,
+            s=size,
+            c=color,
+            edgecolors="black",
+            linewidths=0.8,
+            zorder=5
+        )
+
+    # -----------------------------
+    # 7. Etiquetas
     # -----------------------------
     def bus_label(bus_name: str) -> str:
         name_upper = str(bus_name).upper()
@@ -263,7 +307,7 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
         if "PCC" in name_upper:
             return "PCC"
 
-        if bus_name in storage_buses:
+        if str(bus_name) in storage_buses:
             matches = re.findall(r"\d+", str(bus_name))
             return f"S{matches[-1]}" if matches else str(bus_name)
 
@@ -274,10 +318,9 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
         x = float(grid.buses.loc[bus, "x"])
         y = float(grid.buses.loc[bus, "y"])
 
-        # offsets distintos según tipo de bus
         if bus in pcc_buses:
             dx_text, dy_text = -0.02, -0.12
-        elif bus in storage_buses:
+        elif str(bus) in storage_buses:
             dx_text, dy_text = 0.0, -0.11
         else:
             dx_text, dy_text = 0.0, -0.10
@@ -299,17 +342,17 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
         )
 
     # -----------------------------
-    # 6. Leyenda fuera del gráfico
+    # 8. Leyenda
     # -----------------------------
     legend_elements = [
         Line2D([0], [0], marker='o', color='w', label='Normal bus',
-               markerfacecolor="#4F81BD", markersize=10),
+               markerfacecolor="#4F81BD", markeredgecolor="black", markersize=10),
         Line2D([0], [0], marker='o', color='w', label='Storage bus',
-               markerfacecolor="#70AD47", markersize=10),
+               markerfacecolor="#70AD47", markeredgecolor="black", markersize=10),
         Line2D([0], [0], marker='o', color='w', label='PCC bus',
-               markerfacecolor="#C00000", markersize=10),
+               markerfacecolor="#C00000", markeredgecolor="black", markersize=10),
         Line2D([0], [0], color='gray', lw=2, label='Line'),
-        Line2D([0], [0], color='orange', lw=2, label='Link'),
+        Line2D([0], [0], color='orange', lw=2, linestyle='--', label='Link'),
     ]
 
     ax.legend(
@@ -322,7 +365,7 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
     ax.set_title("Grid topology")
 
     # -----------------------------
-    # 7. Forzar límites para evitar cortes
+    # 9. Límites
     # -----------------------------
     x_vals = grid.buses["x"].astype(float)
     y_vals = grid.buses["y"].astype(float)
@@ -341,9 +384,12 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
     ax.set_xlim(x_min - 0.22 * dx, x_max + 0.22 * dx)
     ax.set_ylim(y_min - 0.22 * dy, y_max + 0.14 * dy)
 
-    plt.tight_layout()
+    ax.set_aspect("equal")
+    ax.axis("off")
 
+    plt.tight_layout()
     return fig
+
 
 def build_dispatch_clean_static(grid: pypsa.Network) -> pd.DataFrame:
     dispatch_raw = grid.generators_t.p.copy()
