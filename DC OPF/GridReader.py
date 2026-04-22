@@ -96,7 +96,6 @@ def leerhojas(filename: str | Path) -> dict:
 
     return sheets
 
-import pandas as pd
 
 def build_sys_settings_from_gui(gui_params: dict) -> pd.DataFrame:
     # Parámetros siempre obligatorios
@@ -191,11 +190,18 @@ def build_battery_economic_settings_from_gui(gui_params: dict) -> pd.DataFrame:
 
     return df_battery_economic_settings
 
-def solve_opf(grid: pypsa.Network, solver_name: str, battery_specs) -> None:
+def solve_opf(grid: pypsa.Network, solver_name: str, battery_specs=None) -> None:
+    
+    if battery_specs is not None:
+        extra_func = lambda n, sns: add_battery_constraints(n, sns, battery_specs)
+    else:
+        extra_func = None
+
     grid.optimize(
         solver_name=solver_name,
-        extra_functionality=lambda n, sns: add_battery_constraints(n, sns, battery_specs)
+        extra_functionality=extra_func
     )
+
 
 
 def get_base_dir() -> Path:
@@ -210,13 +216,19 @@ def get_default_input_file() -> Path:
 
 def run_program(
     input_file: str | Path | None = None,
-    system_parameters: dict | None = None
+    system_parameters: dict | None = None,
+    progress_callback=None
 ) -> Path:
     """
     Ejecuta el programa completo.
     Devuelve la ruta del archivo de entrada usado.
     Lanza excepción si algo falla.
     """
+    def report_progress(value: int, message: str) -> None:
+        if progress_callback is not None:
+            progress_callback(value, message)
+
+    report_progress(0, "iniciando")
    
     if input_file is None:
         input_path = get_default_input_file()
@@ -228,26 +240,30 @@ def run_program(
     
 
     data = leerhojas(input_path)
-
+    report_progress(10, "datos de entrada leídos")
+    print("Los datos de entrada han sido leidos")
 
     if system_parameters is None:
         raise ValueError("No se han recibido los parámetros del sistema desde la GUI.")
   
 
     df_SYS_settings = build_sys_settings_from_gui(system_parameters)
- 
+    report_progress(20, "parámetros de la GUI cargados")
+    print("Se han obtenido los datos introducidos en la GUI")
+    params = df_SYS_settings["SYSTEM PARAMETERS"]
+    horizon = params["Static / Multiperiod"]
+
 
     economic_settings = build_battery_economic_settings_from_gui(system_parameters)
-   
-    def crf(i, n):
-        return (i * (1 + i)**n) / ((1 + i)**n - 1)
     
-    interest = economic_settings.iloc[0, 0]/100
-    lifetime = economic_settings.iloc[1, 0]
+    if horizon=="Multiperiod":
+        def crf(i, n):
+            return (i * (1 + i)**n) / ((1 + i)**n - 1)
+        
+        interest = economic_settings.iloc[0, 0]/100
+        lifetime = economic_settings.iloc[1, 0]
+        CRF = crf(interest, lifetime)
 
-    CRF = crf(interest, lifetime)
-
-    print(interest)
 
     df_Net_Buses = data["Net_Buses"]
     df_Net_Lines = data["Net_Lines"]
@@ -273,49 +289,49 @@ def run_program(
     df_TS_LoadProfiles["time"] = pd.to_datetime(df_TS_LoadProfiles["time"]).dt.tz_localize(None)
     df_TS_LoadProfiles = df_TS_LoadProfiles.set_index("time")
 
-  
+    
     grid = build_network(df_SYS_settings)
+    report_progress(30, "red creada")
 
     add_buses(grid, df_Net_Buses)
-    print("error 1")
+    report_progress(38, "buses añadidos")
+
+
     add_lines(grid, df_Net_Lines)
-    print("error 2")
+    report_progress(45, "líneas añadidas")
+    
+
     if grid.buses.x.isna().any() or grid.buses.y.isna().any():
         print("There are buses for which latitude/longitude were not specified, therefore the grid will not be drawn")
     else:
-        print("error 3")
         drawrealgrid(grid, df_Net_Buses, "azerbaijan_grid.png")
-        print("error 4")
+    print("drawrealgrid está OK")
 
     add_loads(grid, df_Net_Loads, df_SYS_settings, df_TS_LoadProfiles)
-
+    report_progress(52, "cargas añadidas")
+    print("error 2.1")
     add_dispatchable_generators(grid, df_Gen_Dispatchable)
-
+    report_progress(58, "generadores despachables añadidos")
+    print("error 2.2")
     add_renewable_generator(grid, df_Gen_Renewable, df_SYS_settings, df_TS_Wind_Profiles, df_TS_PV_Profiles)
-
-   
-
+    report_progress(64, "generadores renovables añadidos")
+    print("error 2.3")
     grid_connection(grid, df_Grid_connection, df_TS_Energy_Prices, df_SYS_settings)
-
+    report_progress(70, "conexión a red añadida")
+    print("error 2.4")
     solver = "highs"
  
-    battery_specs = add_storage_as_store_links(df_SYS_settings, grid, df_StorageUnit, CRF)
-    print("STORES INDEX:")
-    print(list(grid.stores.index))
+    if horizon == "Multiperiod":
+        battery_specs = add_storage_as_store_links(df_SYS_settings, grid, df_StorageUnit, CRF)
+    elif horizon == "Static":
+        battery_specs=None
+    report_progress(76, "almacenamiento configurado")
+    print("error 2.5")
 
-    print("\nLINKS INDEX:")
-    print(list(grid.links.index))
-
-
+    report_progress(80, "optimizando")
     solve_opf(grid, solver, battery_specs)
-    cols = [c for c in ["PV2_0", "PV3_1", "DispatchGen1_0", "DispatchGen3_1", "Grid_import", "Grid_export"] if c in grid.generators_t.p.columns]
-
-    print(grid.stores.filter(like="BatteryStore_", axis=0))
-    print(grid.links.filter(like="BatteryCharge_", axis=0))
-    print(grid.links.filter(like="BatteryDischarge_", axis=0))
-
-    params = df_SYS_settings["SYSTEM PARAMETERS"]
-    horizon = params["Static / Multiperiod"]
+    report_progress(90, "optimización terminada")
+    
     print("ERROR 3")
     if horizon == "Multiperiod":
         df_available_renewable = build_available_renewable_df(df_Gen_Renewable, df_SYS_settings, df_TS_Wind_Profiles, df_TS_PV_Profiles)
@@ -325,6 +341,7 @@ def run_program(
     else:
         raise ValueError(f"Valor de horizonte no reconocido: {horizon}")
 
+    report_progress(100, "resultados exportados")
     print("ERROR 4")
     return input_path
     

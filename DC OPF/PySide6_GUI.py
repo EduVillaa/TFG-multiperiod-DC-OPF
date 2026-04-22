@@ -1,7 +1,8 @@
 from PySide6.QtWidgets import (
     QApplication, QWidget, QPushButton, QLabel, QFileDialog,
     QVBoxLayout, QHBoxLayout, QMessageBox, QComboBox,
-    QSpinBox, QDoubleSpinBox, QDateEdit, QFormLayout
+    QSpinBox, QDoubleSpinBox, QDateEdit, QFormLayout,
+    QProgressBar
 )
 from PySide6.QtCore import QThread, Signal, QDate
 
@@ -27,6 +28,7 @@ def getBatteryOptimizationMode(filename):
 class Worker(QThread):
     finished = Signal()
     error = Signal(str)
+    progress = Signal(int, str)
 
     def __init__(self, input_path=None, system_parameters=None):
         super().__init__()
@@ -35,7 +37,11 @@ class Worker(QThread):
 
     def run(self):
         try:
-            run_program(self.input_path, self.system_parameters)
+            run_program(
+                self.input_path,
+                self.system_parameters,
+                progress_callback=self.progress.emit
+            )
             self.finished.emit()
         except Exception as e:
             self.error.emit(str(e))
@@ -55,6 +61,10 @@ class MainWindow(QWidget):
         self.btn_select = QPushButton("Select excel")
         self.btn_run = QPushButton("Execute DC OPF")
         self.status = QLabel("State: Ready")
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("%p%")
 
         self.voll_input = QDoubleSpinBox()
         self.voll_input.setRange(0, 1_000_000)
@@ -132,6 +142,7 @@ class MainWindow(QWidget):
         main_layout.addWidget(self.file_label)
         main_layout.addLayout(form_layout)
         main_layout.addLayout(button_layout)
+        main_layout.addWidget(self.progress_bar)
         main_layout.addWidget(self.status)
 
         self.setLayout(main_layout)
@@ -199,6 +210,7 @@ class MainWindow(QWidget):
                 return
 
         self.btn_run.setEnabled(False)
+        self.progress_bar.setValue(0)
         self.status.setText("Estado: ejecutando...")
 
         system_parameters = self.get_system_parameters_from_gui()
@@ -207,11 +219,17 @@ class MainWindow(QWidget):
             input_path=self.input_path,
             system_parameters=system_parameters
         )
+        self.worker.progress.connect(self.on_progress)
         self.worker.finished.connect(self.on_finished)
         self.worker.error.connect(self.on_error)
         self.worker.start()
 
+    def on_progress(self, value, message):
+        self.progress_bar.setValue(value)
+        self.status.setText(f"Estado: {message}")
+
     def on_finished(self):
+        self.progress_bar.setValue(100)
         self.status.setText("Estado: terminado")
         self.btn_run.setEnabled(True)
         QMessageBox.information(self, "Éxito", "Programa ejecutado correctamente.")
