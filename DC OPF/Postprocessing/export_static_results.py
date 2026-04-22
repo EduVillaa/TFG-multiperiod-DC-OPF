@@ -154,7 +154,6 @@ def insert_fig_in_sheet(ws, img_path, cell="A1", max_width=None, max_height=None
     ws.add_image(img, cell)
 
 
-
 def save_fig(fig, path, dpi=150):
     if fig is None:
         return False
@@ -208,7 +207,7 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
             grid.buses.loc[bus, "y"] = pos[bus][1]
 
     bus_names = list(grid.buses.index)
-
+    print("error 3.7.5.0.1")
     # -----------------------------
     # 2. Clasificar buses
     # -----------------------------
@@ -221,7 +220,7 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
         pcc_buses = {pcc_bus_name}
     else:
         pcc_buses = {bus for bus in bus_names if "PCC" in str(bus).upper()}
-
+    print("error 3.7.5.0.7")
     normal_buses = set(bus_names) - storage_buses - pcc_buses
 
     # -----------------------------
@@ -229,7 +228,7 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
     # -----------------------------
     bus_colors = []
     bus_sizes = []
-
+    print("error 3.7.5.0.8")
     for bus in grid.buses.index:
         if bus in pcc_buses:
             bus_colors.append("#C00000")   # rojo
@@ -245,15 +244,16 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
     # 4. Dibujar red
     # -----------------------------
     fig, ax = plt.subplots(figsize=(11.5, 8))
-
+    print("error 3.7.5.0.9")
     grid.plot(
         ax=ax,
+        geomap = False,
         bus_sizes=bus_sizes,
         bus_colors=bus_colors,
         line_colors="gray",
         link_colors="orange"
     )
-
+    print("error 3.7.5.1")
     # -----------------------------
     # 5. Etiquetas
     # -----------------------------
@@ -269,7 +269,7 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
 
         matches = re.findall(r"\d+", str(bus_name))
         return matches[-1] if matches else str(bus_name)
-
+    print("error 3.7.5.2")
     for bus in grid.buses.index:
         x = float(grid.buses.loc[bus, "x"])
         y = float(grid.buses.loc[bus, "y"])
@@ -297,7 +297,7 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
             ),
             zorder=10
         )
-
+    print("error 3.7.5.3")
     # -----------------------------
     # 6. Leyenda fuera del gráfico
     # -----------------------------
@@ -311,7 +311,7 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
         Line2D([0], [0], color='gray', lw=2, label='Line'),
         Line2D([0], [0], color='orange', lw=2, label='Link'),
     ]
-
+    print("error 3.7.5.4")
     ax.legend(
         handles=legend_elements,
         loc="upper left",
@@ -344,6 +344,7 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
     plt.tight_layout()
 
     return fig
+
 
 def build_dispatch_clean_static(grid: pypsa.Network) -> pd.DataFrame:
     dispatch = grid.generators_t.p.copy()
@@ -386,7 +387,7 @@ def export_static_results(grid: pypsa.Network, output_file: str = "results_stati
     - line_flows
     - prices
     """
-
+    print("error 3.1")
     def apply_borders(ws) -> None:
         thin = Side(style="thin", color="000000")
         border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -395,7 +396,7 @@ def export_static_results(grid: pypsa.Network, output_file: str = "results_stati
             for cell in row:
                 if cell.value not in [None, ""]:
                     cell.border = border
-
+    print("error 3.2")
     def autofit_columns(ws) -> None:
         for col in ws.columns:
             max_length = 0
@@ -412,17 +413,17 @@ def export_static_results(grid: pypsa.Network, output_file: str = "results_stati
     # 1) DISPATCH DE GENERADORES
     # =========================================================
     dispatch_clean = build_dispatch_clean_static(grid)
-
+    print("error 3.3")
     # =========================================================
     # 2) DEMANDA
     # =========================================================
     loads_df = grid.loads_t.p.copy()
-
+    print("error 3.4")
     # =========================================================
     # 3) FLUJOS EN LÍNEAS
     # =========================================================
     line_flows = grid.lines_t.p0.copy()
-
+    print("error 3.5")
     line_loading = pd.DataFrame(index=line_flows.index)
     for line in grid.lines.index:
         s_nom = grid.lines.loc[line, "s_nom"]
@@ -435,16 +436,17 @@ def export_static_results(grid: pypsa.Network, output_file: str = "results_stati
     # 4) PRECIOS NODALES
     # =========================================================
     prices = grid.buses_t.marginal_price.copy()
-
+    print("error 3.6")
     # =========================================================
     # 5) KPIs / SANKEY
     # =========================================================
     img_dir = Path("results_static_figures")
     img_dir.mkdir(exist_ok=True)
-
+    print("error 3.7")
     fig_sankey, df_sankey = plot_energy_balance_sankey_static(dispatch_clean, grid)
+    print("error 3.7.5")
     fig_topology = drawGrid(grid)
-
+    print("error 3.8")
     # =========================================================
     # 6) EXPORTAR A EXCEL
     # =========================================================
@@ -462,6 +464,7 @@ def export_static_results(grid: pypsa.Network, output_file: str = "results_stati
             sheet_name="line_flows",
             startrow=startrow
         )
+    print("error 3.9")
     saved_sankey_html = save_plotly_html(fig_sankey, img_dir / "sankey.html")
     #saved_sankey = save_plotly_fig(fig_sankey, img_dir / "sankey.png")
     saved_topology = save_fig(fig_topology, img_dir / "gridtopology.png")
@@ -469,7 +472,7 @@ def export_static_results(grid: pypsa.Network, output_file: str = "results_stati
     # 7) FORMATO BÁSICO
     # =========================================================
     wb = load_workbook(output_file)
-
+    print("error 3.91")
     for sheet in wb.sheetnames:
         autofit_columns(wb[sheet])
 
@@ -491,7 +494,7 @@ def export_static_results(grid: pypsa.Network, output_file: str = "results_stati
         ws["B17"] = "Open interactive Sankey"
         ws["B17"].hyperlink = str((img_dir / "sankey.html").resolve())
         ws["B17"].style = "Hyperlink"
-    
+    print("error 3.95")
     if saved_topology:
         insert_fig_in_sheet(wb["KPIs"], img_dir / "gridtopology.png", cell="Q2", max_width=420*2,
             max_height=320*2)
