@@ -1,0 +1,9 @@
+PT:
+https://www.dgeg.gov.pt/media/sjiphcim/dgeg-arr-2025-07.pdf
+https://www.dgeg.gov.pt/media/ge2hwoxe/dgeg-arr-2026-02.pdf
+https://datahub.ren.pt/pt/eletricidade/evolucao-do-consumo/?date=2017-12-31
+https://www.dgeg.gov.pt/en/statistics/energy-statistics/electricity/consumption-by-municipality-and-type-of-consumer/
+SP
+https://www.sistemaelectrico-ree.es/es/informe-del-sistema-electrico/demanda/evolucion-demanda
+https://data.cnmc.es/energia/energia-electrica/renovables-cogeneracion-y-residuos/evolucion-anual-de-energia-eléctrica
+https://data.cnmc.es/energia/energia-y-suministros/mercado-minorista-de-electricidad-2020/mercado-minorista-de-1
