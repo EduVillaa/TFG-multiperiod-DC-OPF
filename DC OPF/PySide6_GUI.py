@@ -2,12 +2,12 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QPushButton, QLabel, QFileDialog,
     QVBoxLayout, QHBoxLayout, QMessageBox, QComboBox,
     QSpinBox, QDoubleSpinBox, QDateEdit, QFormLayout,
-    QProgressBar
+    QProgressBar, QTimeEdit
 )
-from PySide6.QtCore import QThread, Signal, QDate
+from PySide6.QtCore import QThread, Signal, QDate, QTime
 
 from GridReader import run_program
-
+import traceback
 import pandas as pd
 
 def getBatteryOptimizationMode(filename):
@@ -43,9 +43,10 @@ class Worker(QThread):
                 progress_callback=self.progress.emit
             )
             self.finished.emit()
-        except Exception as e:
-            self.error.emit(str(e))
-
+        except Exception:
+            error_text = traceback.format_exc()  
+            print(error_text)                   
+            self.error.emit(error_text)          
 
 class MainWindow(QWidget):
     def __init__(self):
@@ -76,10 +77,23 @@ class MainWindow(QWidget):
         self.horizon_combo.addItems(["Static", "Multiperiod"])
         self.horizon_combo.setCurrentText("Multiperiod")
 
-        self.min_start_date = QDate(2022, 1, 1)
+        self.min_start_date = QDate(2015, 1, 5)
         self.max_end_date = QDate(2024, 12, 31)
 
         self.start_date_edit = QDateEdit()
+
+        # Campos para simulación estática
+        self.static_date_edit = QDateEdit()
+        self.static_date_edit.setCalendarPopup(True)
+        self.static_date_edit.setDisplayFormat("dd/MM/yyyy")
+        self.static_date_edit.setMinimumDate(self.min_start_date)
+        self.static_date_edit.setMaximumDate(self.max_end_date)
+        self.static_date_edit.setDate(QDate(2022, 1, 1))
+
+        self.static_hour_edit = QTimeEdit()
+        self.static_hour_edit.setDisplayFormat("HH:mm")
+        self.static_hour_edit.setTime(QTime(12, 0))
+
         self.start_date_edit.setCalendarPopup(True)
         self.start_date_edit.setDisplayFormat("dd/MM/yyyy")
         self.start_date_edit.setMinimumDate(self.min_start_date)
@@ -97,7 +111,7 @@ class MainWindow(QWidget):
 
         self.end_date_label = QLabel("End date: -")
 
-        # Nuevos campos
+        # Campos para optimización de batería
         self.discount_rate_input = QDoubleSpinBox()
         self.discount_rate_input.setRange(0.0, 100.0)
         self.discount_rate_input.setDecimals(2)
@@ -109,23 +123,48 @@ class MainWindow(QWidget):
         self.default_battery_lifetime_input.setValue(15)
         self.default_battery_lifetime_input.setSuffix(" years")
 
+        # Solver options
+        self.mip_rel_gap_input = QDoubleSpinBox()
+        self.mip_rel_gap_input.setRange(0.0, 100.0)
+        self.mip_rel_gap_input.setDecimals(3)
+        self.mip_rel_gap_input.setSingleStep(0.1)
+        self.mip_rel_gap_input.setValue(0.1)
+        self.mip_rel_gap_input.setSuffix(" %")
+        self.mip_rel_gap_input.setToolTip(
+        "Relative MIP gap in percent. Example: 0.1% = 0.001 for the solver."
+        )
+
+        self.time_limit_input = QSpinBox()
+        self.time_limit_input.setRange(0, 1_000_000)
+        self.time_limit_input.setValue(3600)
+        self.time_limit_input.setSuffix(" s")
+        self.time_limit_input.setToolTip("Solver time limit in seconds. 3600 = 1 hour")
+
         form_layout = QFormLayout()
 
         self.voll_row_label = QLabel("VOLL")
         self.horizon_row_label = QLabel("Static / Multiperiod")
         self.start_date_row_label = QLabel("Start date")
         self.duration_row_label = QLabel("Simulation duration")
+        self.static_date_row_label = QLabel("Static snapshot date")
+        self.static_hour_row_label = QLabel("Static snapshot hour")
         self.end_date_row_label = QLabel("End date")
         self.resolution_row_label = QLabel("Graph resolution")
         self.discount_rate_row_label = QLabel("Discount rate")
         self.default_battery_lifetime_row_label = QLabel("Default battery lifetime")
+        self.mip_rel_gap_row_label = QLabel("MIP relative gap (%)")
+        self.time_limit_row_label = QLabel("Solver time limit")
 
         form_layout.addRow(self.voll_row_label, self.voll_input)
         form_layout.addRow(self.horizon_row_label, self.horizon_combo)
         form_layout.addRow(self.start_date_row_label, self.start_date_edit)
+        form_layout.addRow(self.static_date_row_label, self.static_date_edit)
+        form_layout.addRow(self.static_hour_row_label, self.static_hour_edit)
         form_layout.addRow(self.duration_row_label, self.duration_input)
         form_layout.addRow(self.end_date_row_label, self.end_date_label)
         form_layout.addRow(self.resolution_row_label, self.resolution_combo)
+        form_layout.addRow(self.mip_rel_gap_row_label, self.mip_rel_gap_input)
+        form_layout.addRow(self.time_limit_row_label, self.time_limit_input)
 
         # Los dos últimos
         form_layout.addRow(self.discount_rate_row_label, self.discount_rate_input)
@@ -182,12 +221,16 @@ class MainWindow(QWidget):
             self.update_dynamic_fields_visibility()
 
     def get_system_parameters_from_gui(self) -> dict:
+        horizon = self.horizon_combo.currentText()
+
         params = {
             "VOLL (€/MWh)": self.voll_input.value(),
-            "Static / Multiperiod": self.horizon_combo.currentText(),
+            "Static / Multiperiod": horizon,
+            "mip_rel_gap": self.mip_rel_gap_input.value() / 100,
+            "time_limit": self.time_limit_input.value(),
         }
 
-        if self.horizon_combo.currentText() == "Multiperiod":
+        if horizon == "Multiperiod":
             params.update({
                 "Start date (dd/mm/aaaa)": self.start_date_edit.date().toPython(),
                 "Simulation duration (days)": self.duration_input.value(),
@@ -200,6 +243,16 @@ class MainWindow(QWidget):
                     "Default battery lifetime (years)": self.default_battery_lifetime_input.value(),
                 })
 
+        elif horizon == "Static":
+            static_date = self.static_date_edit.date().toPython()
+            static_time = self.static_hour_edit.time().toPython()
+
+            params.update({
+                "Static snapshot date (dd/mm/aaaa)": static_date,
+                "Static snapshot hour": static_time,
+                "Static snapshot datetime": pd.Timestamp.combine(static_date, static_time),
+            })
+
         return params
 
     def execute_program(self):
@@ -207,6 +260,12 @@ class MainWindow(QWidget):
             valid, error_msg = self.validate_simulation_dates()
             if not valid:
                 QMessageBox.warning(self, "Fechas no válidas", error_msg)
+                return
+
+        elif self.horizon_combo.currentText() == "Static":
+            valid, error_msg = self.validate_static_snapshot()
+            if not valid:
+                QMessageBox.warning(self, "Snapshot no válido", error_msg)
                 return
 
         self.btn_run.setEnabled(False)
@@ -237,7 +296,16 @@ class MainWindow(QWidget):
     def on_error(self, error_msg):
         self.status.setText("Estado: error")
         self.btn_run.setEnabled(True)
-        QMessageBox.critical(self, "Error", f"Ha ocurrido un error:\n\n{error_msg}")
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Critical)
+        msg.setWindowTitle("Error")
+        msg.setText("Ha ocurrido un error.")
+        
+        # 👇 esto es la clave
+        msg.setDetailedText(error_msg)
+
+        msg.exec()
 
     def update_duration_limit(self):
         start_date = self.start_date_edit.date()
@@ -260,18 +328,34 @@ class MainWindow(QWidget):
         end_date = start_date.addDays(duration_days - 1)
 
         if start_date < self.min_start_date:
-            return False, "La fecha de inicio no puede ser anterior al 01/01/2022."
+            return False, "La fecha de inicio no puede ser anterior al 05/01/2015."
 
         if end_date > self.max_end_date:
             return False, "La fecha final de la simulación no puede superar el 31/12/2024."
 
         return True, ""
+    
+    def validate_static_snapshot(self) -> tuple[bool, str]:
+        static_date = self.static_date_edit.date()
+
+        if static_date < self.min_start_date:
+            return False, "La fecha del snapshot estático no puede ser anterior al 01/01/2015."
+
+        if static_date > self.max_end_date:
+            return False, "La fecha del snapshot estático no puede superar el 31/12/2024."
+
+        return True, ""
 
     def update_dynamic_fields_visibility(self):
-        is_multiperiod = self.horizon_combo.currentText() == "Multiperiod"
+        horizon = self.horizon_combo.currentText()
+
+        is_multiperiod = horizon == "Multiperiod"
+        is_static = horizon == "Static"
+
         battery_opt_enabled = self.battery_optimization_enabled()
         show_battery_fields = is_multiperiod and battery_opt_enabled
 
+        # Campos propios de simulación multiperiodo
         self.start_date_row_label.setVisible(is_multiperiod)
         self.start_date_edit.setVisible(is_multiperiod)
 
@@ -284,11 +368,29 @@ class MainWindow(QWidget):
         self.resolution_row_label.setVisible(is_multiperiod)
         self.resolution_combo.setVisible(is_multiperiod)
 
+        # Campos propios de simulación estática
+        self.static_date_row_label.setVisible(is_static)
+        self.static_date_edit.setVisible(is_static)
+
+        self.static_hour_row_label.setVisible(is_static)
+        self.static_hour_edit.setVisible(is_static)
+
+        # Campos de optimización de batería
+        # Solo aparecen si:
+        # 1. La simulación es multiperiodo
+        # 2. En el Excel hay alguna batería con modo de optimización
         self.discount_rate_row_label.setVisible(show_battery_fields)
         self.discount_rate_input.setVisible(show_battery_fields)
 
         self.default_battery_lifetime_row_label.setVisible(show_battery_fields)
         self.default_battery_lifetime_input.setVisible(show_battery_fields)
+
+        # Opciones del solver
+        self.mip_rel_gap_row_label.setVisible(True)
+        self.mip_rel_gap_input.setVisible(True)
+
+        self.time_limit_row_label.setVisible(True)
+        self.time_limit_input.setVisible(True)
 
 
 if __name__ == "__main__":
