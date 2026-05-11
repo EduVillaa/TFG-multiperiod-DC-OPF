@@ -15,7 +15,8 @@ repository/
 ├── src/
 ├── README.md
 ├── requirements.txt
-└── ...```
+└── ...
+```
 
 ## Funding acknowledgment
 
