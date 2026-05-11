@@ -5,13 +5,13 @@ The input data required to run the model are not included directly in this repos
 
 They can be downloaded from the following OneDrive folder:
 
-[Download input data](AQUI_TU_LINK_DE_ONEDRIVE)
+https://1drv.ms/f/c/76f4b4c107b736ef/IgBxiVvZ4IUPTYPDMc0cudVwAaI9Ixddj2OVUnOmToYmWR8?e=zLy6yv
 
-After downloading the files, place the `data` folder in the root directory of the repository, so that the project structure is:
+After downloading the files, place the `System_data` folder in the root directory of the repository, so that the project structure is:
 
 ```text
 repository/
-├── data/
+├── System_data/
 ├── src/
 ├── README.md
 ├── requirements.txt
