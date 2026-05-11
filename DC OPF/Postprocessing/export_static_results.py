@@ -15,10 +15,16 @@ def plot_energy_balance_sankey_static(dispatch_clean, grid):
     def safe_sum(df, col):
         return df[col].sum() if col in df.columns else 0.0
 
+    print(dispatch_clean)
+
     pv = safe_sum(dispatch_clean, "PV")
     wind = safe_sum(dispatch_clean, "Wind")
+    nuclear = safe_sum(dispatch_clean, "Nuclear")
+    ror = safe_sum(dispatch_clean, "ror")
+    biomass = safe_sum(dispatch_clean, "biomass")
+    ccgt = safe_sum(dispatch_clean, "CCGT")
     grid_import = safe_sum(dispatch_clean, "Grid_import")
-    dispatch = safe_sum(dispatch_clean, "Dispatch")
+    other = safe_sum(dispatch_clean, "Other")
     shedding = safe_sum(dispatch_clean, "shedding")
 
     load = grid.loads_t.p.sum().sum() if hasattr(grid.loads_t.p, "sum") else 0.0
@@ -27,30 +33,38 @@ def plot_energy_balance_sankey_static(dispatch_clean, grid):
     served_load = max(load - shedding, 0.0)
 
     labels = [
-        "PV",
-        "Wind",
-        "Grid import",
-        "Dispatch",
-        "Energy supplied",
-        "Served load",
-        "Grid export",
+        "PV",              # 0
+        "Wind",            # 1
+        "Nuclear",         # 2
+        "ror",             # 3
+        "Biomass",         # 4
+        "CCGT",            # 5
+        "Grid import",     # 6
+        "Other",        # 7
+        "Energy supplied", # 8
+        "Served load",     # 9
+        "Grid export",     # 10
     ]
 
     source = [
-        0, 1, 2, 3,   # inputs -> energy supplied
-        4, 4          # energy supplied -> served load / grid export
+        0, 1, 2, 3, 4, 5, 6, 7,  # inputs -> energy supplied
+        8, 8                     # energy supplied -> served load / grid export
     ]
 
     target = [
-        4, 4, 4, 4,
-        5, 6
+        8, 8, 8, 8, 8, 8, 8, 8,
+        9, 10
     ]
 
     value = [
         pv,
         wind,
+        nuclear,
+        ror,
+        biomass,
+        ccgt,
         grid_import,
-        dispatch,
+        other,
         served_load,
         grid_export
     ]
@@ -73,7 +87,7 @@ def plot_energy_balance_sankey_static(dispatch_clean, grid):
         ),
         link=dict(
             source=links_df["source"],
-            target=links_df["target"],
+            target=target if False else links_df["target"],
             value=links_df["value"]
         )
     )])
@@ -89,13 +103,30 @@ def plot_energy_balance_sankey_static(dispatch_clean, grid):
         margin=dict(l=20, r=20, t=100, b=20)
     )
 
+    total_supply = (
+        pv
+        + wind
+        + nuclear
+        + ror
+        + biomass
+        + ccgt
+        + other
+        + grid_import
+    )
+
+    balance_check = served_load + grid_export
+
     sankey_df = pd.DataFrame({
         "Category": [
             "",
             "",
             "PV",
             "Wind",
-            "Dispatch",
+            "Nuclear",
+            "ror",
+            "Biomass",
+            "CCGT",
+            "Other",
             "Grid import",
             "Total supply",
             "",
@@ -111,21 +142,24 @@ def plot_energy_balance_sankey_static(dispatch_clean, grid):
             "Supply side (MW)",
             pv,
             wind,
-            dispatch,
+            nuclear,
+            ror,
+            biomass,
+            ccgt,
+            other,
             grid_import,
-            pv + wind + dispatch + grid_import,
+            total_supply,
             "",
             "Demand side (MW)",
             load,
             served_load,
             shedding,
             grid_export,
-            served_load + grid_export,
+            balance_check,
         ]
     })
 
     return fig, sankey_df
-
 
 def insert_fig_in_sheet(ws, img_path, cell="A1", max_width=None, max_height=None):
     """
@@ -189,7 +223,6 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
     """
     Devuelve una figura con la topología de la red diferenciando:
     - buses normales
-    - buses de storage
     - PCC
     """
 
@@ -198,120 +231,108 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
     # -----------------------------
     G = grid.graph()
     pos = nx.spring_layout(G, seed=42)
-    # pos = nx.kamada_kawai_layout(G)
-    # pos = nx.circular_layout(G)
 
     for bus in grid.buses.index:
         if bus in pos:
-            grid.buses.loc[bus, "x"] = pos[bus][0]
-            grid.buses.loc[bus, "y"] = pos[bus][1]
+            grid.buses.loc[bus, "x"] = float(pos[bus][0])
+            grid.buses.loc[bus, "y"] = float(pos[bus][1])
 
     bus_names = list(grid.buses.index)
-    print("error 3.7.5.0.1")
+
     # -----------------------------
     # 2. Clasificar buses
     # -----------------------------
-    if not grid.stores.empty and "bus" in grid.stores.columns:
-        storage_buses = set(grid.stores["bus"].dropna())
-    else:
-        storage_buses = set()
+   
 
     if pcc_bus_name is not None and pcc_bus_name in bus_names:
         pcc_buses = {pcc_bus_name}
     else:
         pcc_buses = {bus for bus in bus_names if "PCC" in str(bus).upper()}
-    print("error 3.7.5.0.7")
-    normal_buses = set(bus_names) - storage_buses - pcc_buses
+
+    normal_buses = set(map(str, bus_names)) - set(map(str, pcc_buses))
 
     # -----------------------------
-    # 3. Colores y tamaños por bus
-    # -----------------------------
-    bus_colors = []
-    bus_sizes = []
-    print("error 3.7.5.0.8")
-    for bus in grid.buses.index:
-        if bus in pcc_buses:
-            bus_colors.append("#C00000")   # rojo
-            bus_sizes.append(0.010)        # más grande
-        elif bus in storage_buses:
-            bus_colors.append("#70AD47")   # verde
-            bus_sizes.append(0.007)        # un poco más pequeño
-        else:
-            bus_colors.append("#4F81BD")   # azul
-            bus_sizes.append(0.0085)       # normal
-
-    # -----------------------------
-    # 4. Dibujar red
+    # 3. Crear figura
     # -----------------------------
     fig, ax = plt.subplots(figsize=(11.5, 8))
-    print("error 3.7.5.0.9")
-    grid.plot(
-        ax=ax,
-        geomap = False,
-        bus_sizes=bus_sizes,
-        bus_colors=bus_colors,
-        line_colors="gray",
-        link_colors="orange"
-    )
-    print("error 3.7.5.1")
+
     # -----------------------------
-    # 5. Etiquetas
+    # 4. Dibujar líneas
     # -----------------------------
-    def bus_label(bus_name: str) -> str:
-        name_upper = str(bus_name).upper()
+    if not grid.lines.empty:
+        for _, row in grid.lines.iterrows():
+            bus0 = row["bus0"]
+            bus1 = row["bus1"]
 
-        if "PCC" in name_upper:
-            return "PCC"
+            if bus0 in pos and bus1 in pos:
+                x0, y0 = pos[bus0]
+                x1, y1 = pos[bus1]
 
-        if bus_name in storage_buses:
-            matches = re.findall(r"\d+", str(bus_name))
-            return f"S{matches[-1]}" if matches else str(bus_name)
+                ax.plot(
+                    [x0, x1],
+                    [y0, y1],
+                    color="gray",
+                    linewidth=1.8,
+                    zorder=1
+                )
 
-        matches = re.findall(r"\d+", str(bus_name))
-        return matches[-1] if matches else str(bus_name)
-    print("error 3.7.5.2")
+    # -----------------------------
+    # 5. Dibujar links
+    # -----------------------------
+    if hasattr(grid, "links") and not grid.links.empty:
+        for _, row in grid.links.iterrows():
+            bus0 = row["bus0"]
+            bus1 = row["bus1"]
+
+            if bus0 in pos and bus1 in pos:
+                x0, y0 = pos[bus0]
+                x1, y1 = pos[bus1]
+
+                ax.plot(
+                    [x0, x1],
+                    [y0, y1],
+                    color="orange",
+                    linewidth=2.2,
+                    linestyle="--",
+                    zorder=2
+                )
+
+    # -----------------------------
+    # 6. Dibujar buses manualmente
+    # -----------------------------
     for bus in grid.buses.index:
         x = float(grid.buses.loc[bus, "x"])
         y = float(grid.buses.loc[bus, "y"])
 
-        # offsets distintos según tipo de bus
         if bus in pcc_buses:
-            dx_text, dy_text = -0.02, -0.12
-        elif bus in storage_buses:
-            dx_text, dy_text = 0.0, -0.11
+            color = "#C00000"
+            size = 220
         else:
-            dx_text, dy_text = 0.0, -0.10
+            color = "#4F81BD"
+            size = 190
 
-        ax.text(
-            x + dx_text,
-            y + dy_text,
-            bus_label(bus),
-            fontsize=11,
-            ha="center",
-            va="center",
-            bbox=dict(
-                facecolor="white",
-                edgecolor="none",
-                alpha=0.85,
-                pad=1.4
-            ),
-            zorder=10
+        ax.scatter(
+            x,
+            y,
+            s=size,
+            c=color,
+            edgecolors="black",
+            linewidths=0.8,
+            zorder=5
         )
-    print("error 3.7.5.3")
+
     # -----------------------------
-    # 6. Leyenda fuera del gráfico
+    # 8. Leyenda
     # -----------------------------
     legend_elements = [
         Line2D([0], [0], marker='o', color='w', label='Normal bus',
-               markerfacecolor="#4F81BD", markersize=10),
-        Line2D([0], [0], marker='o', color='w', label='Storage bus',
-               markerfacecolor="#70AD47", markersize=10),
+               markerfacecolor="#4F81BD", markeredgecolor="black", markersize=10),
         Line2D([0], [0], marker='o', color='w', label='PCC bus',
-               markerfacecolor="#C00000", markersize=10),
+               markerfacecolor="#C00000", markeredgecolor="black", markersize=10),
         Line2D([0], [0], color='gray', lw=2, label='Line'),
-        Line2D([0], [0], color='orange', lw=2, label='Link'),
+        Line2D([0], [0], color='orange', lw=2, linestyle='--', label='Link'),
     ]
-    print("error 3.7.5.4")
+
     ax.legend(
         handles=legend_elements,
         loc="upper left",
@@ -322,7 +343,7 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
     ax.set_title("Grid topology")
 
     # -----------------------------
-    # 7. Forzar límites para evitar cortes
+    # 9. Límites
     # -----------------------------
     x_vals = grid.buses["x"].astype(float)
     y_vals = grid.buses["y"].astype(float)
@@ -341,8 +362,10 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
     ax.set_xlim(x_min - 0.22 * dx, x_max + 0.22 * dx)
     ax.set_ylim(y_min - 0.22 * dy, y_max + 0.14 * dy)
 
-    plt.tight_layout()
+    ax.set_aspect("equal")
+    ax.axis("off")
 
+    plt.tight_layout()
     return fig
 
 
@@ -355,19 +378,33 @@ def build_dispatch_clean_static(grid: pypsa.Network) -> pd.DataFrame:
     if any("Wind" in c for c in dispatch.columns):
         dispatch["Wind"] = dispatch[[c for c in dispatch.columns if "Wind" in c]].sum(axis=1)
 
-    if any("Dispatch" in c for c in dispatch.columns):
-        dispatch["Dispatch"] = dispatch[[c for c in dispatch.columns if "Dispatch" in c]].sum(axis=1)
+    if any("Other" in c for c in dispatch.columns):
+        dispatch["Other"] = dispatch[[c for c in dispatch.columns if "Other" in c]].sum(axis=1)
 
     if any("shedding" in c for c in dispatch.columns):
         dispatch["shedding"] = dispatch[[c for c in dispatch.columns if "shedding" in c]].sum(axis=1)
+    
+    if any("Nuclear" in c for c in dispatch.columns):
+        dispatch["Nuclear"] = dispatch[[c for c in dispatch.columns if "Nuclear" in c]].sum(axis=1)
 
-    # Export positivo en resultados
-    if "Grid_export" in dispatch.columns:
-        dispatch["Grid_export"] = -dispatch["Grid_export"]
+    if any("ror" in c for c in dispatch.columns):
+        dispatch["ror"] = dispatch[[c for c in dispatch.columns if "ror" in c]].sum(axis=1)
+    
+    if any("CCGT" in c for c in dispatch.columns):
+        dispatch["CCGT"] = dispatch[[c for c in dispatch.columns if "CCGT" in c]].sum(axis=1)
+
+    if any("biomass" in c for c in dispatch.columns):
+        dispatch["biomass"] = dispatch[[c for c in dispatch.columns if "biomass" in c]].sum(axis=1)
+
+    if any("Grid_export" in c for c in dispatch.columns):
+        dispatch["Grid_export"] = dispatch[[c for c in dispatch.columns if "Grid_export" in c]].sum(axis=1)
+    
+    if any("Grid_import" in c for c in dispatch.columns):
+        dispatch["Grid_import"] = dispatch[[c for c in dispatch.columns if "Grid_import" in c]].sum(axis=1)
 
     dispatch_clean = pd.DataFrame(index=dispatch.index)
 
-    for col in ["PV", "Wind", "Dispatch", "Grid_import", "Grid_export", "shedding"]:
+    for col in ["PV", "Wind", "Other", "Grid_import", "Grid_export", "shedding", "Nuclear", "CCGT", "ror", "biomass"]:
         if col in dispatch.columns:
             dispatch_clean[col] = dispatch[col]
 
@@ -387,7 +424,7 @@ def export_static_results(grid: pypsa.Network, output_file: str = "results_stati
     - line_flows
     - prices
     """
-    print("error 3.1")
+  
     def apply_borders(ws) -> None:
         thin = Side(style="thin", color="000000")
         border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -396,7 +433,7 @@ def export_static_results(grid: pypsa.Network, output_file: str = "results_stati
             for cell in row:
                 if cell.value not in [None, ""]:
                     cell.border = border
-    print("error 3.2")
+
     def autofit_columns(ws) -> None:
         for col in ws.columns:
             max_length = 0
@@ -413,17 +450,17 @@ def export_static_results(grid: pypsa.Network, output_file: str = "results_stati
     # 1) DISPATCH DE GENERADORES
     # =========================================================
     dispatch_clean = build_dispatch_clean_static(grid)
-    print("error 3.3")
+
     # =========================================================
     # 2) DEMANDA
     # =========================================================
     loads_df = grid.loads_t.p.copy()
-    print("error 3.4")
+
     # =========================================================
     # 3) FLUJOS EN LÍNEAS
     # =========================================================
     line_flows = grid.lines_t.p0.copy()
-    print("error 3.5")
+  
     line_loading = pd.DataFrame(index=line_flows.index)
     for line in grid.lines.index:
         s_nom = grid.lines.loc[line, "s_nom"]
@@ -436,17 +473,17 @@ def export_static_results(grid: pypsa.Network, output_file: str = "results_stati
     # 4) PRECIOS NODALES
     # =========================================================
     prices = grid.buses_t.marginal_price.copy()
-    print("error 3.6")
+  
     # =========================================================
     # 5) KPIs / SANKEY
     # =========================================================
     img_dir = Path("results_static_figures")
     img_dir.mkdir(exist_ok=True)
-    print("error 3.7")
+
     fig_sankey, df_sankey = plot_energy_balance_sankey_static(dispatch_clean, grid)
-    print("error 3.7.5")
+    
     fig_topology = drawGrid(grid)
-    print("error 3.8")
+    
     # =========================================================
     # 6) EXPORTAR A EXCEL
     # =========================================================
@@ -464,7 +501,7 @@ def export_static_results(grid: pypsa.Network, output_file: str = "results_stati
             sheet_name="line_flows",
             startrow=startrow
         )
-    print("error 3.9")
+
     saved_sankey_html = save_plotly_html(fig_sankey, img_dir / "sankey.html")
     #saved_sankey = save_plotly_fig(fig_sankey, img_dir / "sankey.png")
     saved_topology = save_fig(fig_topology, img_dir / "gridtopology.png")
@@ -472,7 +509,7 @@ def export_static_results(grid: pypsa.Network, output_file: str = "results_stati
     # 7) FORMATO BÁSICO
     # =========================================================
     wb = load_workbook(output_file)
-    print("error 3.91")
+  
     for sheet in wb.sheetnames:
         autofit_columns(wb[sheet])
 
@@ -484,17 +521,13 @@ def export_static_results(grid: pypsa.Network, output_file: str = "results_stati
     if "line_flows" in wb.sheetnames:
         ws_lines = wb["line_flows"]
         ws_lines.cell(row=len(line_flows) + 3, column=1).value = "Line loading (%)"
-    """
-    if saved_sankey:
-        insert_fig_in_sheet(wb["KPIs"], img_dir / "sankey.png", cell="D2", max_width=380*2,
-            max_height=260*2)
-    """
+
     if saved_sankey_html:
         ws = wb["KPIs"]
         ws["B17"] = "Open interactive Sankey"
         ws["B17"].hyperlink = str((img_dir / "sankey.html").resolve())
         ws["B17"].style = "Hyperlink"
-    print("error 3.95")
+  
     if saved_topology:
         insert_fig_in_sheet(wb["KPIs"], img_dir / "gridtopology.png", cell="Q2", max_width=420*2,
             max_height=320*2)

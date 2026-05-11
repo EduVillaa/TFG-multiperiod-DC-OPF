@@ -10,8 +10,7 @@ import re
 import networkx as nx
 from Postprocessing.Graphs.dispatchgraphs import dispatch_graph_resolution_choice
 from Postprocessing.Graphs.SOCgraphs import SOC_graph_resolution_choice
-#from Postprocessing.Graphs.lineflowgraphs import maxloading_graph_resolution_choice, plot_line_loading_percent
-from Postprocessing.Graphs.lineflowgraphs import maxloading_graph_resolution_choice, plot_line_loading_percent, plot_line_loading_histogram_global, plot_line_loading_histogram_top_lines
+from Postprocessing.Graphs.lineflowgraphs import maxloading_graph_resolution_choice, plot_line_loading_histogram_global, plot_line_loading_histogram_top_lines
 from Postprocessing.Graphs.sankeygraph import plot_energy_balance_sankey
 from Postprocessing.Graphs.renewablegraphs import renewable_graph_resolution_choice
 from Postprocessing.Graphs.renewablesharegraphs import renewableshare_graph_resolution_choice
@@ -19,6 +18,7 @@ from Postprocessing.Graphs.import_export_graphs import GridExportImport_graph_re
 from Postprocessing.KPIsoptimized_battery import get_battery_sizes
 from Postprocessing.Graphs.loadgraphs import total_load_graph_resolution_choice
 from Postprocessing.Graphs.pricesgraphs import prices_graph_resolution_choice, nodal_price_histogram
+from Postprocessing.Graphs.FranceMorocco_imp_exp import interconnection_graph_resolution_choice
 
 def save_plotly_fig(fig, path, width=1200, height=750, scale=2):
     if fig is None:
@@ -263,7 +263,7 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
             zorder=5
         )
 
-    # -----------------------------
+    """# -----------------------------
     # 7. Etiquetas
     # -----------------------------
     def bus_label(bus_name: str) -> str:
@@ -304,7 +304,7 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
                 pad=1.4
             ),
             zorder=10
-        )
+        )"""
 
     # -----------------------------
     # 8. Leyenda
@@ -356,73 +356,130 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
     return fig
 
 
-def export_multiperiod_results(grid: pypsa.Network, df_SYS_settings: pd.DataFrame, df_available_renewable: pd.DataFrame) -> None:
+def export_multiperiod_results(grid: pypsa.Network,
+df_SYS_settings: pd.DataFrame, 
+df_available_renewable: pd.DataFrame,
+CFsolar: float,
+CFwind: float) -> None:
     
     dispatch = grid.generators_t.p.copy()
-    dispatch["PV"] = dispatch[[c for c in dispatch.columns if "PV" in c]].sum(axis=1)
-    dispatch["Wind"] = dispatch[[c for c in dispatch.columns if "Wind" in c]].sum(axis=1)
-    dispatch["Dispatch"] = dispatch[[c for c in dispatch.columns if "Dispatch" in c]].sum(axis=1)
-    dispatch["shedding"] = dispatch[[c for c in dispatch.columns if "shedding" in c]].sum(axis=1)
-    print("ERROR 5")
-    charge_cols = [c for c in grid.links_t.p0.columns if c.startswith("BatteryCharge_")]
-    discharge_cols = [c for c in grid.links_t.p1.columns if c.startswith("BatteryDischarge_")]
-    print("ERROR 6")
-    # lado AC
+    
+    carriers = grid.generators.carrier.dropna().unique()
+
+    for carrier in carriers:
+        cols = [c for c in dispatch.columns if carrier in c]
+        if cols:
+            dispatch[carrier] = dispatch[cols].sum(axis=1)
+
+
+    # ============================================================
+    # BATERÍAS
+    # ============================================================
+
+    charge_cols = [
+        c for c in grid.links_t.p0.columns
+        if c.startswith("BatteryCharge_")
+    ]
+
+    discharge_cols = [
+        c for c in grid.links_t.p1.columns
+        if c.startswith("BatteryDischarge_")
+    ]
+
+    discharge_cols_hydro = [c for c in grid.links_t.p0.columns
+        if c.startswith("hydro_Discharge")]
+
+    
+    charge_cols_PHS = [c for c in grid.links_t.p1.columns
+        if c.startswith("PHS_Charge")]
+
+    
+    discharge_cols_PHS = [c for c in grid.links_t.p0.columns
+        if c.startswith("PHS_Discharge")]
+
+
+    hydro_and_PHS_discharge = grid.links_t.p0[discharge_cols_hydro+discharge_cols_PHS].clip(lower=0).sum(axis=1)
+    PHS_charge = grid.links_t.p0[charge_cols_PHS].clip(lower=0).sum(axis=1)
+
+    dispatch.insert(0, "Hidroelectric_discharge", hydro_and_PHS_discharge)
+    dispatch.insert(1, "Hidroelectric_charge", -PHS_charge)
+
     battery_charge = grid.links_t.p0[charge_cols].clip(lower=0).sum(axis=1)
     battery_discharge = (-grid.links_t.p1[discharge_cols]).clip(lower=0).sum(axis=1)
 
     dispatch.insert(0, "battery_discharge", battery_discharge)
     dispatch.insert(1, "battery_charge", -battery_charge)
 
-    if "Grid_export" in dispatch.columns:
-        dispatch["Grid_export"] = -dispatch["Grid_export"]
+    # ============================================================
+    # INTERCONEXIONES EXTERNAS
+    # ============================================================
+
+    interconnection_cols = [
+        c for c in grid.links_t.p0.columns
+        if c.startswith("LPCC_")
+    ]
+
+    grid_import = grid.links_t.p0[interconnection_cols].clip(lower=0).sum(axis=1)
+    grid_export = grid.links_t.p0[interconnection_cols].clip(upper=0).sum(axis=1)
+
+    dispatch["Grid_import"] = grid_import
+    dispatch["Grid_export"] = grid_export
+
+    # ============================================================
+    # DISPATCH CLEAN
+    # ============================================================
 
     dispatch_clean = pd.DataFrame(index=dispatch.index)
+
     for col in [
         "PV",
         "Wind",
         "battery_discharge",
-        "Dispatch",
+        "Other",
         "Grid_import",
         "battery_charge",
         "Grid_export",
         "shedding",
+        "ror",
+        "Nuclear",
+        "CCGT",
+        "biomass",
+        "Hidroelectric_discharge",
+        "Hidroelectric_charge"
     ]:
         if col in dispatch.columns:
             dispatch_clean[col] = dispatch[col]
 
     dispatch_clean = dispatch_clean.loc[:, (dispatch_clean.abs() > 1e-6).any()]
-
+    print(dispatch_clean)
+    # ============================================================
+    # GENERACIÓN DE FIGURAS
+    # ============================================================
     # Carpeta de imágenes
     img_dir = Path("results_multiperiod_figures")
     img_dir.mkdir(exist_ok=True)
-    print("ERROR 7")
     # Generar figuras
     fig_dispatch = dispatch_graph_resolution_choice(df_SYS_settings, dispatch_clean)
-    print("ERROR 7.1")
     fig_soc_total, fig_soc_batteries = SOC_graph_resolution_choice(df_SYS_settings, grid)
-    fig_line_heatmap, fig_line_loading = maxloading_graph_resolution_choice(df_SYS_settings, grid)
-    fig_max_line_loading = plot_line_loading_percent(grid, "Multiperiod")
+    fig_line_heatmap, fig_line_loading, fig_most_loaded_lines_charge = maxloading_graph_resolution_choice(df_SYS_settings, grid)
     fig_total_loading_histogram = plot_line_loading_histogram_global(grid, "Multiperiod")
     fig_top_lines_loading_histogram = plot_line_loading_histogram_top_lines(grid, "Multiperiod", 3)
-    print("ERROR 7.2")
-    fig_sankey, df_sankey = plot_energy_balance_sankey(dispatch_clean, grid, df_available_renewable)
-    print("ERROR 7.3")
+    fig_sankey, df_sankey = plot_energy_balance_sankey(dispatch_clean, grid, df_available_renewable, CFsolar, CFwind)
     fig_total_load = total_load_graph_resolution_choice(df_SYS_settings, grid)
     fig_export_import = GridExportImport_graph_resolution_choice(df_SYS_settings, dispatch_clean)
+    fig_imp_exp_France_Morocco = interconnection_graph_resolution_choice(df_SYS_settings, grid)
     
     fig_renewable_total, fig_renewable_pv_wind = renewable_graph_resolution_choice(df_SYS_settings, 
                                                                                    dispatch_clean, df_available_renewable)
     
     fig_renewable_share_total = renewableshare_graph_resolution_choice(df_SYS_settings, dispatch_clean, grid)
     fig_grid_topology = drawGrid(grid)
-    print("7.4")
     fig_mean_prices, fig_heatmap = prices_graph_resolution_choice(df_SYS_settings, grid, 2)
   
     fig_prices_histogram = nodal_price_histogram(grid, "Multiperiod")
 
     df_bat_optimized_data = get_battery_sizes(grid)
-    print(df_bat_optimized_data)
+
 
     gen_p_renewables = grid.generators_t.p.loc[:, 
     grid.generators_t.p.columns.str.contains("PV|Wind")
@@ -433,16 +490,14 @@ def export_multiperiod_results(grid: pypsa.Network, df_SYS_settings: pd.DataFram
     df_available_renewable,
     gen_p_renewables
     )   
-    print(8.1)
     df_loads = pd.concat(
     [grid.loads_t.p, grid.loads_t.p.sum(axis=1).rename("Total_load")],
     axis=1
 )
-    print(8.2)
+
     # Guardar Excel con tablas
     output_file = "results_multiperiod.xlsx"
     with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
-        print(8.3)
         df_sankey.to_excel(writer, sheet_name="KPIs", index=False, header=False, startcol=1)
 
         df_bat_optimized_data.to_excel(
@@ -453,14 +508,13 @@ def export_multiperiod_results(grid: pypsa.Network, df_SYS_settings: pd.DataFram
         startcol=5,
     )
         dispatch_clean.round(2).to_excel(writer, sheet_name="dispatch")
-        df_detailed_renewable.round(2).to_excel(writer, sheet_name="renewables")
+        df_detailed_renewable.round(2).to_excel(writer, sheet_name="Solar and wind")
         grid.stores_t.e.round(2).to_excel(writer, sheet_name="battery soc")
         grid.lines_t.p0.round(2).to_excel(writer, sheet_name="line flows")
-        print(grid.stores_t.e)
         grid.buses_t.marginal_price.round(2).to_excel(writer, sheet_name="prices")
         df_loads.to_excel(writer, sheet_name="loads")
 
-    print("ERROR 9")
+
     # Guardar PNGs
     saved_dispatch = save_fig(fig_dispatch, img_dir / "dispatch.png")
     #saved_sankey = save_plotly_fig(fig_sankey, img_dir / "sankey.png")
@@ -469,13 +523,14 @@ def export_multiperiod_results(grid: pypsa.Network, df_SYS_settings: pd.DataFram
     saved_soc_batteries = save_fig(fig_soc_batteries, img_dir / "battery_soc_batteries.png")
 
     saved_line_loading = save_fig(fig_line_loading, img_dir / "line_loading.png")
-    saved_max_line_loading = save_fig(fig_max_line_loading, img_dir / "max_line_loading.png")
+    saved_max_line_loading = save_fig(fig_most_loaded_lines_charge, img_dir / "max_line_loading.png")
     saved_line_heatmap = save_fig(fig_line_heatmap, img_dir / "line_loading_heatmap.png")
     saved_total_loading_histogram = save_fig(fig_total_loading_histogram, img_dir / "total_loading_histogram.png")
     saved_top_loaded_lines_histogram = save_fig(fig_top_lines_loading_histogram, img_dir / "top_loaded_lines_histogram.png")
 
     saved_export_import = save_fig(fig_export_import, img_dir / "export_import.png")
     saved_total_load = save_fig(fig_total_load, img_dir / "total_load.png")
+    saved_france_morocco_imp_exp = save_fig(fig_imp_exp_France_Morocco, img_dir / "IMP_EXP_fr_m.png")
 
     saved_renewable_total = save_fig(fig_renewable_total, img_dir / "renewable_total.png")
     saved_renewable_pv_wind = save_fig(fig_renewable_pv_wind, img_dir / "renewable.png")
@@ -512,7 +567,7 @@ def export_multiperiod_results(grid: pypsa.Network, df_SYS_settings: pd.DataFram
 
         if saved_renewable_total:
             insert_fig_in_sheet(
-                wb["renewables"],
+                wb["Solar and wind"],
                 img_dir / "renewable_total.png",
                 cell="A30",
                 max_width=520*2,
@@ -521,7 +576,7 @@ def export_multiperiod_results(grid: pypsa.Network, df_SYS_settings: pd.DataFram
 
         if saved_renewable_pv_wind:
             insert_fig_in_sheet(
-                wb["renewables"],
+                wb["Solar and wind"],
                 img_dir / "renewable.png",
                 cell="J30",
                 max_width=520*2,
@@ -530,7 +585,7 @@ def export_multiperiod_results(grid: pypsa.Network, df_SYS_settings: pd.DataFram
 
         if saved_renewable_share_total:
             insert_fig_in_sheet(
-                wb["renewables"],
+                wb["Solar and wind"],
                 img_dir / "renewable_share.png",
                 cell="J6",
                 max_width=520*2,
@@ -541,10 +596,21 @@ def export_multiperiod_results(grid: pypsa.Network, df_SYS_settings: pd.DataFram
             insert_fig_in_sheet(
                 wb["dispatch"],
                 img_dir / "dispatch.png",
-                cell="K2",
+                cell="N1",
                 max_width=520*2,
                 max_height=300*2
             )
+
+        if saved_france_morocco_imp_exp:
+            insert_fig_in_sheet(
+                wb["dispatch"],
+                img_dir / "IMP_EXP_fr_m.png",
+                cell="N47",
+                max_width=520*2,
+                max_height=300*2
+            )
+            print("figura insertada")
+
         """
         if saved_sankey_html:
             insert_fig_in_sheet(
@@ -565,7 +631,7 @@ def export_multiperiod_results(grid: pypsa.Network, df_SYS_settings: pd.DataFram
             insert_fig_in_sheet(
                 wb["dispatch"],
                 img_dir / "export_import.png",
-                cell="K26",
+                cell="N25",
                 max_width=520*2,
                 max_height=300*2
             )
@@ -610,7 +676,7 @@ def export_multiperiod_results(grid: pypsa.Network, df_SYS_settings: pd.DataFram
             insert_fig_in_sheet(
                 wb["line flows"],
                 img_dir / "line_loading_heatmap.png",
-                cell="A13",
+                cell="A1",
                 max_width=520*2,
                 max_height=320*2
             )
@@ -637,7 +703,7 @@ def export_multiperiod_results(grid: pypsa.Network, df_SYS_settings: pd.DataFram
             insert_fig_in_sheet(
                 wb["KPIs"],
                 img_dir / "gridtopology.png",
-                cell="I10",
+                cell="F16",
                 max_width=420*2,
                 max_height=320*2
             )

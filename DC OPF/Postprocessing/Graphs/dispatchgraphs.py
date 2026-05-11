@@ -11,20 +11,29 @@ def plot_dispatch_figure_weekly_average(dispatch_clean: pd.DataFrame, horizon: s
     if horizon != "Multiperiod":
         return None
 
-    pos_cols = ["Dispatch", "PV", "Wind", "battery_discharge", "Grid_import"]
-    neg_cols = ["battery_charge", "Grid_export"]
+    pos_cols = ["Nuclear", "Other", "CCGT", "ror", "biomass", "PV", "Wind", "battery_discharge", 
+                "Grid_import", "Hidroelectric_discharge"]
+    neg_cols = ["battery_charge", "Grid_export", "Hidroelectric_charge"]
 
     pos_cols = [c for c in pos_cols if c in dispatch_clean.columns]
     neg_cols = [c for c in neg_cols if c in dispatch_clean.columns]
 
     colors = {
-        "PV": "#FFD54F",
-        "Wind": "#4FC3F7",
-        "battery_discharge": "#66BB6A",
-        "Dispatch": "#E57373",
-        "Grid_import": "#B0BEC5",
-        "battery_charge": "#5C6BC0",
-        "Grid_export": "#424242"
+        "PV": "#FFD54F",                     # amarillo solar
+        "Wind": "#4FC3F7",                   # azul claro
+        "ror": "#4DB6AC",                    # turquesa agua fluyente
+        "Hidroelectric_discharge": "#1976D2", # azul hidro
+        "battery_discharge": "#66BB6A",      # verde batería descarga
+        "biomass": "#8D6E63",                # marrón biomasa
+        "Nuclear": "#9575CD",                # morado nuclear
+        "CCGT": "#E57373",                   # rojo gas
+        "Other": "#EF5350",               # rojo genérico despacho
+
+        "Grid_import": "#B0BEC5",            # gris claro importación
+
+        "battery_charge": "#2E7D32",         # verde oscuro carga batería
+        "Hidroelectric_charge": "#0D47A1",   # azul oscuro bombeo/carga hidro
+        "Grid_export": "#424242"             # gris oscuro exportación
     }
 
     # Nos quedamos solo con las columnas relevantes
@@ -102,20 +111,29 @@ def plot_dispatch_figure_daily_average(dispatch_clean: pd.DataFrame, horizon: st
     if horizon != "Multiperiod":
         return None
 
-    pos_cols = ["Dispatch", "PV", "Wind", "battery_discharge", "Grid_import"]
-    neg_cols = ["battery_charge", "Grid_export"]
+    pos_cols = ["Nuclear", "Other", "CCGT", "ror", "biomass", "PV", "Wind", "battery_discharge", 
+                "Grid_import", "Hidroelectric_discharge"]
+    neg_cols = ["battery_charge", "Grid_export", "Hidroelectric_charge"]
 
     pos_cols = [c for c in pos_cols if c in dispatch_clean.columns]
     neg_cols = [c for c in neg_cols if c in dispatch_clean.columns]
 
     colors = {
-        "PV": "#FFD54F",
-        "Wind": "#4FC3F7",
-        "battery_discharge": "#66BB6A",
-        "Dispatch": "#E57373",
-        "Grid_import": "#B0BEC5",
-        "battery_charge": "#5C6BC0",
-        "Grid_export": "#424242"
+        "PV": "#FFD54F",                     # amarillo solar
+        "Wind": "#4FC3F7",                   # azul claro
+        "ror": "#4DB6AC",                    # turquesa agua fluyente
+        "Hidroelectric_discharge": "#1976D2", # azul hidro
+        "battery_discharge": "#66BB6A",      # verde batería descarga
+        "biomass": "#8D6E63",                # marrón biomasa
+        "Nuclear": "#9575CD",                # morado nuclear
+        "CCGT": "#E57373",                   # rojo gas
+        "Other": "#EF5350",               # rojo genérico despacho
+
+        "Grid_import": "#B0BEC5",            # gris claro importación
+
+        "battery_charge": "#2E7D32",         # verde oscuro carga batería
+        "Hidroelectric_charge": "#0D47A1",   # azul oscuro bombeo/carga hidro
+        "Grid_export": "#424242"             # gris oscuro exportación
     }
 
     # Nos quedamos solo con las columnas relevantes
@@ -194,20 +212,29 @@ def plot_dispatch_figure_hourly_snapshots(dispatch_clean: pd.DataFrame, horizon:
 
     fig, ax = plt.subplots(figsize=(14, 6))
 
-    pos_cols = ["Dispatch", "PV", "Wind", "battery_discharge", "Grid_import"]
-    neg_cols = ["battery_charge", "Grid_export"]
+    pos_cols = ["Nuclear", "Other", "CCGT", "ror", "biomass", "PV", "Wind", "battery_discharge", 
+                "Grid_import", "Hidroelectric_discharge"]
+    neg_cols = ["battery_charge", "Grid_export", "Hidroelectric_charge"]
 
     pos_cols = [c for c in pos_cols if c in dispatch_clean.columns]
     neg_cols = [c for c in neg_cols if c in dispatch_clean.columns]
 
     colors = {
-        "PV": "#FFD54F",
-        "Wind": "#4FC3F7",
-        "battery_discharge": "#66BB6A",
-        "Dispatch": "#E57373",
-        "Grid_import": "#B0BEC5",
-        "battery_charge": "#5C6BC0",
-        "Grid_export": "#424242"
+        "PV": "#FFD54F",                     # amarillo solar
+        "Wind": "#4FC3F7",                   # azul claro
+        "ror": "#4DB6AC",                    # turquesa agua fluyente
+        "Hidroelectric_discharge": "#1976D2", # azul hidro
+        "battery_discharge": "#66BB6A",      # verde batería descarga
+        "biomass": "#8D6E63",                # marrón biomasa
+        "Nuclear": "#9575CD",                # morado nuclear
+        "CCGT": "#E57373",                   # rojo gas
+        "Other": "#EF5350",               # rojo genérico despacho
+
+        "Grid_import": "#B0BEC5",            # gris claro importación
+
+        "battery_charge": "#2E7D32",         # verde oscuro carga batería
+        "Hidroelectric_charge": "#0D47A1",   # azul oscuro bombeo/carga hidro
+        "Grid_export": "#424242"             # gris oscuro exportación
     }
 
     # Positivos
@@ -276,12 +303,12 @@ def dispatch_graph_resolution_choice(df_SYS_settings: pd.DataFrame, dispatch_cle
     params = df_SYS_settings["SYSTEM PARAMETERS"]
     horizon = params["Static / Multiperiod"]
     resolution = params["Graph resolution"]
-    n_snapshots = params["Simulation duration (days)"]
-
+    days = params["Simulation duration (days)"]
+    print(dispatch_clean)
     if resolution == "Auto":
-        if n_snapshots >= 200:
+        if days >= 200:
             return plot_dispatch_figure_weekly_average(dispatch_clean, horizon)
-        elif 60 <= n_snapshots < 200:
+        elif 60 <= days < 200:
             return plot_dispatch_figure_daily_average(dispatch_clean, horizon)
         else:
             return plot_dispatch_figure_hourly_snapshots(dispatch_clean, horizon)

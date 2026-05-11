@@ -24,7 +24,7 @@ def create_buses_with_drawing_names(grid: pypsa.Network,
             new_index.append(i)   # ← mantiene el nombre original del bus
 
     buses_new.index = new_index
-    print(buses_new)
+    
     return buses_new
 
 
@@ -52,8 +52,9 @@ def drawrealgrid(grid: pypsa.Network, df_Net_Buses: pd.DataFrame, filename):
     ax.add_feature(cfeature.BORDERS, linestyle=":")
     
     # ----------------------
-    # 3. Dibujar líneas
+    # 1. Dibujar conexiones entre buses
     # ----------------------
+    # Dibujar líneas AC
     for _, line in grid.lines.iterrows():
         b0 = grid.buses.loc[line.bus0]
         b1 = grid.buses.loc[line.bus1]
@@ -67,8 +68,24 @@ def drawrealgrid(grid: pypsa.Network, df_Net_Buses: pd.DataFrame, filename):
             zorder=2
         )
 
+
+    # Dibujar links, por ejemplo interconexiones/PCCs
+    for _, link in grid.links.iterrows():
+        b0 = grid.buses.loc[link.bus0]
+        b1 = grid.buses.loc[link.bus1]
+
+        ax.plot(
+            [b0.x, b1.x],
+            [b0.y, b1.y],
+            color="red",
+            linewidth=2,
+            linestyle="--",
+            transform=ccrs.PlateCarree(),
+            zorder=2
+        )
+
     # ----------------------
-    # 4. Dibujar buses
+    # 2. Dibujar buses
     # ----------------------
     ax.scatter(
         grid.buses.x,

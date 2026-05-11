@@ -3,6 +3,285 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pypsa
 
+def plot_soc_per_battery_figure(
+    grid,
+    horizon: str = "Multiperiod",
+    top_n_batteries: int | None = 5
+):
+    
+    """
+    Devuelve la figura del SOC separado por baterías
+    modeladas como Store + Link.
+
+    Parameters
+    ----------
+    grid : pypsa.Network
+        Red PyPSA.
+    horizon : str, optional
+        Solo genera figura si horizon == "Multiperiod".
+    top_n_batteries : int | None, optional
+        Número de baterías a mostrar según mayor SOC promedio.
+        Si es None, se muestran todas.
+    """
+
+    if horizon != "Multiperiod":
+        return None
+
+    store_cols = [c for c in grid.stores_t.e.columns if c.startswith("BatteryStore_")]
+    if not store_cols:
+        return None
+
+    soc = grid.stores_t.e[store_cols].copy()
+
+    if soc.empty:
+        return None
+
+    # Seleccionar solo las N baterías con mayor SOC promedio
+    if top_n_batteries is not None:
+        top_batteries = (
+            soc.mean(axis=0)
+            .sort_values(ascending=False)
+            .head(top_n_batteries)
+            .index
+        )
+        soc = soc[top_batteries]
+
+    if soc.empty:
+        return None
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+
+    for battery_name in soc.columns:
+        if "e_nom_opt" in grid.stores.columns and pd.notna(grid.stores.loc[battery_name, "e_nom_opt"]):
+            capacity = pd.to_numeric(grid.stores.loc[battery_name, "e_nom_opt"], errors="coerce")
+        else:
+            capacity = pd.to_numeric(grid.stores.loc[battery_name, "e_nom"], errors="coerce")
+
+        ax.plot(
+            soc.index,
+            soc[battery_name],
+            label=f"{battery_name} ({capacity:.1f} MWh)"
+        )
+
+    ax.set_xlabel("Time")
+    ax.set_ylabel("State of charge [MWh]")
+    ax.set_title(f"Battery SOC by unit - Top {len(soc.columns)} average SOC")
+
+    n_snapshots = len(soc)
+
+    if n_snapshots <= 24:
+        ax.xaxis.set_major_locator(mdates.HourLocator(interval=2))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+
+    elif n_snapshots <= 24 * 7:
+        ax.xaxis.set_major_locator(mdates.DayLocator())
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d\n%b"))
+
+    else:
+        interval = max(1, int(n_snapshots / 24 / 14))
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=interval))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d\n%b"))
+
+    ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1))
+    ax.grid(True, axis="y")
+    fig.tight_layout()
+
+    return fig
+
+def plot_soc_per_battery_daily_average_figure(
+    grid,
+    horizon: str = "Multiperiod",
+    top_n_batteries: int | None = 5
+):
+    """
+    Devuelve la figura del SOC medio diario separado por baterías
+    modeladas como Store + Link.
+
+    Parameters
+    ----------
+    grid : pypsa.Network
+        Red PyPSA.
+    horizon : str, optional
+        Solo genera figura si horizon == "Multiperiod".
+    top_n_batteries : int | None, optional
+        Número de baterías a mostrar según mayor SOC promedio.
+        Si es None, se muestran todas.
+    """
+
+    if horizon != "Multiperiod":
+        return None
+
+    store_cols = [c for c in grid.stores_t.e.columns if c.startswith("BatteryStore_")]
+    if len(store_cols) == 0:
+        return None
+
+    soc = grid.stores_t.e[store_cols].copy()
+    if soc.empty:
+        return None
+
+    # Seleccionar las N baterías con mayor SOC promedio horario
+    if top_n_batteries is not None:
+        top_batteries = (
+            soc.mean(axis=0)
+            .sort_values(ascending=False)
+            .head(top_n_batteries)
+            .index
+        )
+        soc = soc[top_batteries]
+
+    if soc.empty:
+        return None
+
+    soc_daily = soc.resample("D").mean()
+
+    if soc_daily.empty:
+        return None
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+
+    for battery_name in soc_daily.columns:
+        if "e_nom_opt" in grid.stores.columns and pd.notna(grid.stores.loc[battery_name, "e_nom_opt"]):
+            capacity = pd.to_numeric(grid.stores.loc[battery_name, "e_nom_opt"], errors="coerce")
+        else:
+            capacity = pd.to_numeric(grid.stores.loc[battery_name, "e_nom"], errors="coerce")
+
+        ax.plot(
+            soc_daily.index,
+            soc_daily[battery_name],
+            label=f"{battery_name} ({capacity:.1f} MWh)"
+        )
+
+    ax.set_xlabel("Time")
+    ax.set_ylabel("State of charge [MWh]")
+    ax.set_title(f"Battery SOC by unit daily average - Top {len(soc_daily.columns)} average SOC")
+
+    n_days = len(soc_daily)
+
+    if n_days <= 14:
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
+
+    elif n_days <= 90:
+        ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d\n%b"))
+
+    else:
+        interval = max(1, int(n_days / 14))
+        ax.xaxis.set_major_locator(mdates.DayLocator(interval=interval))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b\n%Y"))
+
+    ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1))
+    ax.grid(True, axis="y")
+    fig.tight_layout()
+
+    return fig
+
+def plot_soc_per_battery_weekly_average_figure(
+    grid,
+    horizon: str = "Multiperiod",
+    top_n_batteries: int | None = 5
+):
+
+    """
+    Devuelve la figura del SOC medio semanal separado por baterías
+    modeladas como Store + Link.
+
+    Parameters
+    ----------
+    grid : pypsa.Network
+        Red PyPSA.
+    horizon : str, optional
+        Solo genera figura si horizon == "Multiperiod".
+    top_n_batteries : int | None, optional
+        Número de baterías a mostrar según mayor SOC promedio.
+        Si es None, se muestran todas.
+    """
+
+    if horizon != "Multiperiod":
+        return None
+
+    store_cols = [c for c in grid.stores_t.e.columns if c.startswith("BatteryStore_")]
+    if len(store_cols) == 0:
+        return None
+
+    soc = grid.stores_t.e[store_cols].copy()
+
+    if soc.empty:
+        return None
+
+    # Seleccionar las N baterías con mayor SOC promedio horario
+    if top_n_batteries is not None:
+        top_batteries = (
+            soc.mean(axis=0)
+            .sort_values(ascending=False)
+            .head(top_n_batteries)
+            .index
+        )
+        soc = soc[top_batteries]
+
+    if soc.empty:
+        return None
+
+    # Media semanal por batería
+    soc_weekly = soc.resample("W").mean()
+
+    if soc_weekly.empty:
+        return None
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+
+    for battery_name in soc_weekly.columns:
+        if "e_nom_opt" in grid.stores.columns and pd.notna(grid.stores.loc[battery_name, "e_nom_opt"]):
+            capacity = pd.to_numeric(grid.stores.loc[battery_name, "e_nom_opt"], errors="coerce")
+        else:
+            capacity = pd.to_numeric(grid.stores.loc[battery_name, "e_nom"], errors="coerce")
+
+        ax.plot(
+            soc_weekly.index,
+            soc_weekly[battery_name],
+            label=f"{battery_name} ({capacity:.1f} MWh)"
+        )
+
+    # Línea de capacidad máxima por batería
+    for battery_name in soc_weekly.columns:
+        if battery_name in grid.stores.index:
+            if "e_nom_opt" in grid.stores.columns and pd.notna(grid.stores.loc[battery_name, "e_nom_opt"]):
+                capacity = pd.to_numeric(grid.stores.loc[battery_name, "e_nom_opt"], errors="coerce")
+            else:
+                capacity = pd.to_numeric(grid.stores.loc[battery_name, "e_nom"], errors="coerce")
+
+            ax.axhline(
+                y=capacity,
+                linestyle="--",
+                linewidth=1,
+                alpha=0.5
+            )
+
+    ax.set_xlabel("Time")
+    ax.set_ylabel("State of charge [MWh]")
+    ax.set_title(f"Battery SOC by unit weekly average - Top {len(soc_weekly.columns)} average SOC")
+
+    n_weeks = len(soc_weekly)
+
+    if n_weeks <= 12:
+        ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d\n%b"))
+
+    elif n_weeks <= 52:
+        ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=4))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b\n%Y"))
+
+    else:
+        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%b\n%Y"))
+
+    ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1))
+    ax.grid(True, axis="y")
+    fig.tight_layout()
+
+    return fig
+
+
 def plot_total_soc_figure(grid, horizon: str = "Multiperiod"):
     """
     Devuelve la figura del SOC total de todas las baterías modeladas como Store + Link.
@@ -48,124 +327,6 @@ def plot_total_soc_figure(grid, horizon: str = "Multiperiod"):
     fig.tight_layout()
 
     return fig
-
-def plot_soc_per_battery_figure(grid, horizon: str = "Multiperiod"):
-    
-    """
-    Devuelve la figura del SOC separado por baterías
-    modeladas como Store + Link.
-    """
-
-    if horizon != "Multiperiod":
-        return None
-
-    store_cols = [c for c in grid.stores_t.e.columns if c.startswith("BatteryStore_")]
-    if not store_cols:
-        return None
-
-    soc = grid.stores_t.e[store_cols].copy()
-
-    if soc.empty:
-        return None
-
-    fig, ax = plt.subplots(figsize=(12, 5))
-
-    for battery_name in soc.columns:
-        # --- CAPACIDAD CORRECTA ---
-        if "e_nom_opt" in grid.stores.columns and pd.notna(grid.stores.loc[battery_name, "e_nom_opt"]):
-            capacity = pd.to_numeric(grid.stores.loc[battery_name, "e_nom_opt"], errors="coerce")
-        else:
-            capacity = pd.to_numeric(grid.stores.loc[battery_name, "e_nom"], errors="coerce")
-
-        ax.plot(
-            soc.index,
-            soc[battery_name],
-            label=f"{battery_name} ({capacity:.1f} MWh)"
-        )
-
-    ax.set_xlabel("Time")
-    ax.set_ylabel("State of charge [MWh]")
-    ax.set_title("Battery SOC by unit")
-
-    n_snapshots = len(soc)
-
-    if n_snapshots <= 24:
-        ax.xaxis.set_major_locator(mdates.HourLocator(interval=2))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-
-    elif n_snapshots <= 24 * 7:
-        ax.xaxis.set_major_locator(mdates.DayLocator())
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d\n%b"))
-
-    else:
-        interval = max(1, int(n_snapshots / 24 / 14))
-        ax.xaxis.set_major_locator(mdates.DayLocator(interval=interval))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d\n%b"))
-
-    ax.legend()
-    ax.grid(True, axis="y")
-    fig.tight_layout()
-
-    return fig
-
-def plot_soc_per_battery_daily_average_figure(grid, horizon: str = "Multiperiod"):
-    """
-    Devuelve la figura del SOC medio diario separado por baterías
-    modeladas como Store + Link.
-    """
-
-    if horizon != "Multiperiod":
-        return None
-
-    store_cols = [c for c in grid.stores_t.e.columns if c.startswith("BatteryStore_")]
-    if len(store_cols) == 0:
-        return None
-
-    soc = grid.stores_t.e[store_cols].copy()
-    if soc.empty:
-        return None
-
-    soc_daily = soc.resample("D").mean()
-
-    fig, ax = plt.subplots(figsize=(12, 5))
-
-    for battery_name in soc_daily.columns:
-            if "e_nom_opt" in grid.stores.columns and pd.notna(grid.stores.loc[battery_name, "e_nom_opt"]):
-                capacity = pd.to_numeric(grid.stores.loc[battery_name, "e_nom_opt"], errors="coerce")
-            else:
-                capacity = pd.to_numeric(grid.stores.loc[battery_name, "e_nom"], errors="coerce")
-
-            ax.plot(
-                soc_daily.index,
-                soc_daily[battery_name],
-                label=f"{battery_name} ({capacity:.1f} MWh)"
-            )
-
-    ax.set_xlabel("Time")
-    ax.set_ylabel("State of charge [MWh]")
-    ax.set_title("Battery SOC by unit (daily average)")
-
-    n_days = len(soc_daily)
-
-    if n_days <= 14:
-        ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
-
-    elif n_days <= 90:
-        ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d\n%b"))
-
-    else:
-        interval = max(1, int(n_days / 14))
-        ax.xaxis.set_major_locator(mdates.DayLocator(interval=interval))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b\n%Y"))
-
-    ax.legend()
-    ax.grid(True, axis="y")
-    fig.tight_layout()
-
-    return fig
-
 
 def plot_total_soc_daily_stats_figure(grid, horizon: str = "Multiperiod"):
     """
@@ -236,7 +397,6 @@ def plot_total_soc_daily_stats_figure(grid, horizon: str = "Multiperiod"):
 
     return fig
 
-
 def plot_total_soc_weekly_stats_figure(grid, horizon: str = "Multiperiod"):
     """
     Devuelve la figura del SOC total con:
@@ -286,77 +446,6 @@ def plot_total_soc_weekly_stats_figure(grid, horizon: str = "Multiperiod"):
     ax.set_title("Total battery SOC (weekly statistics)")
 
     n_weeks = len(soc_weekly_mean)
-
-    if n_weeks <= 12:
-        ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d\n%b"))
-
-    elif n_weeks <= 52:
-        ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=4))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b\n%Y"))
-
-    else:
-        ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%b\n%Y"))
-
-    ax.legend()
-    ax.grid(True, axis="y")
-    fig.tight_layout()
-
-    return fig
-
-
-def plot_soc_per_battery_weekly_average_figure(grid, horizon: str = "Multiperiod"):
-
-    if horizon != "Multiperiod":
-        return None
-
-    store_cols = [c for c in grid.stores_t.e.columns if c.startswith("BatteryStore_")]
-    if len(store_cols) == 0:
-        return None
-
-    soc = grid.stores_t.e[store_cols].copy()
-
-    if soc.empty:
-        return None
-
-    # Media semanal por batería
-    soc_weekly = soc.resample("W").mean()
-
-    fig, ax = plt.subplots(figsize=(12, 5))
-
-    for battery_name in soc_weekly.columns:
-        if "e_nom_opt" in grid.stores.columns and pd.notna(grid.stores.loc[battery_name, "e_nom_opt"]):
-            capacity = pd.to_numeric(grid.stores.loc[battery_name, "e_nom_opt"], errors="coerce")
-        else:
-            capacity = pd.to_numeric(grid.stores.loc[battery_name, "e_nom"], errors="coerce")
-
-        ax.plot(
-            soc_weekly.index,
-            soc_weekly[battery_name],
-            label=f"{battery_name} ({capacity:.1f} MWh)"
-        )
-
-    # Línea de capacidad máxima por batería
-    for battery_name in soc_weekly.columns:
-        if battery_name in grid.stores.index:
-            if "e_nom_opt" in grid.stores.columns and pd.notna(grid.stores.loc[battery_name, "e_nom_opt"]):
-                capacity = pd.to_numeric(grid.stores.loc[battery_name, "e_nom_opt"], errors="coerce")
-            else:
-                capacity = pd.to_numeric(grid.stores.loc[battery_name, "e_nom"], errors="coerce")
-
-            ax.axhline(
-                y=capacity,
-                linestyle="--",
-                linewidth=1,
-                alpha=0.5
-            )
-
-    ax.set_xlabel("Time")
-    ax.set_ylabel("State of charge [MWh]")
-    ax.set_title("Battery SOC by unit (weekly average)")
-
-    n_weeks = len(soc_weekly)
 
     if n_weeks <= 12:
         ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
