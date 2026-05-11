@@ -1,11 +1,15 @@
 import math
 import pypsa
 import pandas as pd
+from Network_builder.Generators.GasPriceBuilder import CCGT_marginal_cost
 
 
 def add_dispatchable_generators(
     grid: pypsa.Network,
-    df_Gen_Dispatchable: pd.DataFrame
+    df_Gen_Dispatchable: pd.DataFrame,
+    gas_price: pd.DataFrame, 
+    co2_price: pd.DataFrame,
+    df_ror_p_max_pu_scaled: pd.DataFrame,
 ) -> None:
 
     df = df_Gen_Dispatchable.copy()
@@ -51,7 +55,7 @@ def add_dispatchable_generators(
         if pd.isna(Pmax) or pd.isna(location) or Pmax <= 0:
             continue
     
-
+        carrier = str(df.loc[n, "Carrier"])
         Pmin = float(df.loc[n, "Pmin (MW)"])
         marginal_cost = float(df.loc[n, "€/MWh"])
 
@@ -69,6 +73,7 @@ def add_dispatchable_generators(
         start_up_cost = float(df.loc[n, "Start up cost (€)"])
         shut_down_cost = float(df.loc[n, "Shut down cost (€)"])
         stand_by_cost = float(df.loc[n, "Stand by cost (€/h)"])
+        efficiency = float(df.loc[n, "efficiency"])
 
         p_init_raw = df.loc[n, "Initial power (MW)"]
 
@@ -135,13 +140,76 @@ def add_dispatchable_generators(
         add_kwargs["ramp_limit_start_up"] = ramp_limit_start_up
         add_kwargs["ramp_limit_shut_down"] = ramp_limit_shut_down
 
+        #Los generadores ror no son despachables 
+        if carrier == "ror":
+            gen_name = f"{carrier}_{location}_{n}"
+            committable = False
+
+            gen_col = f"{location} ror"
+
+            if gen_col not in df_ror_p_max_pu_scaled.columns:
+                raise ValueError(f"No existe la columna '{gen_col}' en df_ror_p_max_pu_scaled")
+
+            p_max_pu = df_ror_p_max_pu_scaled[gen_col].copy()
+            p_max_pu.index = pd.to_datetime(p_max_pu.index)
+            p_max_pu = p_max_pu.reindex(grid.snapshots)
+
+            if p_max_pu.isna().any():
+                raise ValueError(
+                    f"Hay NaN en p_max_pu para {gen_col} después de reindexar. "
+                    f"Revisa snapshots y fechas."
+                )
+
+            p_max_pu = p_max_pu.clip(lower=0, upper=1)
+            print("P max pu del ror")
+            print(p_max_pu)
+            # Muy importante para evitar infeasibility
+            p_min_pu = 0.0
+
+            # Para ror muy importante no meter restricciones de unit commitment ni rampas porque no es comittable, de hecho ni siquiera es despachable
+            # 3 horas troubleshooteando esto!!
+            add_kwargs = {}
+
+            start_up_cost = 0.0
+            shut_down_cost = 0.0
+            stand_by_cost = 0.0
+            min_up_time = 0
+            min_down_time = 0
+            up_time_before = 0
+            down_time_before = 0
+        
+        elif carrier == "biomass":
+            gen_name = f"{carrier}_{location}_{n}"
+            
+            committable = False
+            p_max_pu = 1.0
+            p_min_pu = 0.0
+            add_kwargs = {}
+            start_up_cost = 0.0
+            shut_down_cost = 0.0
+            stand_by_cost = 0.0
+            min_up_time = 0
+            min_down_time = 0
+            up_time_before = 0
+            down_time_before = 0
+
+        else:
+            committable = True
+            p_max_pu = 1.0
+
+            if carrier is None:
+                carrier = "Other"
+
+            gen_name = f"{carrier}_{location}_{n}"
+    
+        
         grid.add(
             "Generator",
-            f"DispatchGen{location}_{n}",
+            gen_name,
             bus=f"Bus.{location}",
             p_nom=Pmax,
             p_min_pu=p_min_pu,
-            p_max_pu=1.0,
+            p_max_pu=p_max_pu,
             marginal_cost=marginal_cost,
             start_up_cost=start_up_cost,
             shut_down_cost=shut_down_cost,
@@ -150,7 +218,15 @@ def add_dispatchable_generators(
             min_down_time=min_down_time,
             up_time_before=up_time_before,
             down_time_before=down_time_before,
-            committable=True,
-            carrier="AC",
+            committable=committable,
+            carrier=carrier,
             **add_kwargs,
         )
+
+        if carrier == "CCGT":
+            ccgt_cost = CCGT_marginal_cost(efficiency, gas_price, co2_price)
+            if "PT" in location:
+                grid.generators_t.marginal_cost[gen_name] = ccgt_cost["PORTUGAL CCGT [EUR/MWh]"]
+            elif "ES" in location:
+                grid.generators_t.marginal_cost[gen_name] = ccgt_cost["SPAIN CCGT [EUR/MWh]"]
+

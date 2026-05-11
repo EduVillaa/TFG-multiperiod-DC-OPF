@@ -1,6 +1,9 @@
 import pypsa
 
 
+
+# Esta función se asegura de que cuando la potencia del inversor es extendable, los links de carga y descarga al optimizarse
+# tengan los dos la misma potencia
 def add_battery_constraints(grid: pypsa.Network, snapshots, battery_specs: list[dict]) -> None:
     m = grid.model
 

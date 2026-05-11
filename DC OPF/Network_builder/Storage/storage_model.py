@@ -1,6 +1,8 @@
 import pypsa
 import pandas as pd
 import numpy as np
+from Network_builder.Storage.runoff4hydro import get_hydro_inflow_node
+
 
 
 
@@ -8,10 +10,11 @@ def add_storage_as_store_links(
     df_SYS_settings: pd.DataFrame,
     grid: pypsa.Network,
     df_StorageUnit: pd.DataFrame,
-    CRF
+    CRF,
+    df_hydro_inflow_scaled: pd.DataFrame,
+    initial_soc_fraction: float,
 ) -> list[dict]:
     
-    print("por favor")
     """
     Añade baterías como Store + Link a la red.
 
@@ -23,7 +26,6 @@ def add_storage_as_store_links(
     """
     params = df_SYS_settings["SYSTEM PARAMETERS"]
     simulation_duration = params["Simulation duration (days)"]
-    print("Error 2")
     df = df_StorageUnit.copy()
     battery_specs = []
     missing_capex_warning_shown = False
@@ -80,7 +82,7 @@ def add_storage_as_store_links(
         .astype(str)
         .str.strip()
     )
-    print("Error 3")
+
     valid_modes = {"Fixed", "Optimize MWh", "Optimize MW", "Optimize both"}
 
     # -----------------------------
@@ -130,7 +132,7 @@ def add_storage_as_store_links(
         marginal_cost = float(df.loc[n, "Marginal cost (€/MWh)"])
         capex_storage = float(df.loc[n, "Investment cost storage (€/MWh)"])
         capex_inverter = float(df.loc[n, "Investment cost inverter (€/MW)"])
-        print("Error 4")
+        carrier = str(df.loc[n, "Carrier"])
         initial_soc = float(df.loc[n, "Initial SOC (%)"])
         if initial_soc > 1.0:
             initial_soc = initial_soc / 100.0
@@ -146,16 +148,21 @@ def add_storage_as_store_links(
 
         ac_bus = f"Bus.{location}"
         bat_bus = f"Bus_battery_{location}_{n}"
+        
+        store_name = f"{carrier}_{location}_{n}"
 
-        store_name = f"BatteryStore_{location}_{n}"
-        charge_link_name = f"BatteryCharge_{location}_{n}"
-        discharge_link_name = f"BatteryDischarge_{location}_{n}"
+        if carrier!="PHS" and carrier!="hydro":
+            charge_link_name = f"BatteryCharge_{location}_{n}"
+            discharge_link_name = f"BatteryDischarge_{location}_{n}"
+        else:
+            charge_link_name = f"{carrier}_Charge_{location}_{n}"
+            discharge_link_name = f"{carrier}_Discharge_{location}_{n}"
 
         if bat_bus not in grid.buses.index:
             grid.add(
                 "Bus",
                 bat_bus,
-                carrier="AC",
+                carrier=carrier,
             )
 
         # Si falta CAPEX en una variable extendable, usar base como cota máxima
@@ -168,10 +175,14 @@ def add_storage_as_store_links(
                 "Using base values as maximum bounds when available."
             )
             missing_capex_warning_shown = True
-        print("ERROR 5")
+
         # -----------------------------
         # Store
         # -----------------------------
+        if carrier == "hydro":
+            initial_soc = initial_soc_fraction
+            e_initial = initial_soc * e_nom_base
+
         store_kwargs = dict(
             bus=bat_bus,
             e_initial=e_initial,
@@ -179,7 +190,7 @@ def add_storage_as_store_links(
             standing_loss=standing_loss,
             marginal_cost=marginal_cost,
             capital_cost=capex_storage*CRF/365*simulation_duration,
-            carrier="AC",
+            carrier=carrier,
         )
 
         if optimize_e:
@@ -193,9 +204,44 @@ def add_storage_as_store_links(
             store_kwargs.update(
                 e_nom=e_nom_base,
             )
+        
+
 
         grid.add("Store", store_name, **store_kwargs)
+        
 
+        if carrier == "hydro":
+            gen_name = f"HydroInflow_{location}_{n}"
+
+            inflow = get_hydro_inflow_node(df_hydro_inflow_scaled, location)
+            inflow = pd.to_numeric(inflow, errors="coerce")
+            inflow.index = pd.to_datetime(inflow.index)
+            inflow = inflow.reindex(grid.snapshots).fillna(0.0)
+
+            p_nom_inflow = inflow.max()
+
+            if p_nom_inflow > 0:
+                profile = inflow / p_nom_inflow
+
+                grid.add(
+                    "Generator",
+                    gen_name,
+                    bus=bat_bus,
+                    carrier="hydro inflow",
+                    p_nom=p_nom_inflow,
+                    marginal_cost=0.0,
+                    p_min_pu=0.0,
+                    p_max_pu=1.0,
+                )
+
+                grid.generators_t.p_max_pu.loc[:, gen_name] = profile
+            else:
+                print(f"Aviso: inflow máximo cero para {location}. No se añade generador de inflow.")
+
+
+
+        annualized_inverter_cost = capex_inverter * CRF / 365 * simulation_duration
+        link_capital_cost = 0.5 * annualized_inverter_cost
         # -----------------------------
         # Link de carga
         # -----------------------------
@@ -204,8 +250,8 @@ def add_storage_as_store_links(
             bus1=bat_bus,
             efficiency=eta_store,
             marginal_cost=0.0,
-            capital_cost=capex_inverter*CRF/365*simulation_duration,
-            carrier="AC",
+            capital_cost=link_capital_cost,
+            carrier=carrier,
         )
 
         if optimize_p:
@@ -230,8 +276,8 @@ def add_storage_as_store_links(
             bus1=ac_bus,
             efficiency=eta_dispatch,
             marginal_cost=0.0,
-            capital_cost=capex_inverter,
-            carrier="AC",
+            capital_cost=link_capital_cost,
+            carrier=carrier,
         )
 
         if optimize_p:

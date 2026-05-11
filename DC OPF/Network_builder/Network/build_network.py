@@ -7,9 +7,10 @@ def build_network(df_SYS_settings: pd.DataFrame) -> pypsa.Network:
 
     params = df_SYS_settings["SYSTEM PARAMETERS"]
     horizon = params["Static / Multiperiod"]
-
+    static_snapshot_datetime = params["Static snapshot datetime"]
+    
     if horizon == "Static":
-        grid.set_snapshots(pd.DatetimeIndex(["2026-01-01 00:00"]))
+        grid.set_snapshots(pd.DatetimeIndex([static_snapshot_datetime]))
 
     elif horizon == "Multiperiod":
         start_date = params["Start date (dd/mm/aaaa)"]
