@@ -1,4 +1,20 @@
+## Input data
 
+The input data required to run the model are not included directly in this repository due to file size limitations.
+
+They can be downloaded from the following OneDrive folder:
+
+[Download input data](AQUI_TU_LINK_DE_ONEDRIVE)
+
+After downloading the files, place the `data` folder in the root directory of the repository, so that the project structure is:
+
+```text
+repository/
+├── data/
+├── src/
+├── README.md
+├── requirements.txt
+└── ...
 
 ## Funding acknowledgment
 
