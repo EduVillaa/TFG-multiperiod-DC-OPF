@@ -7,15 +7,17 @@ They can be downloaded from the following OneDrive folder:
 
 https://1drv.ms/f/c/76f4b4c107b736ef/IgBxiVvZ4IUPTYPDMc0cudVwAaI9Ixddj2OVUnOmToYmWR8?e=zLy6yv
 
-After downloading and extracting the files, place the `System_data` folder inside the main project folder `DC-OPF`, so that the project structure is:
+After downloading and extracting the files, place the `System_data` folder inside the inner `DC-OPF` project folder, so that the repository structure is:
 
 ```text
-DC-OPF/
-├── Network_builder/
-├── Postprocessing/
-├── System_data/
-├── PySide6_GUI.py
-├── GridReader.py
+TFG-multiperiod-DC-OPF/
+├── DC-OPF/
+│   ├── Network_builder/
+│   ├── Postprocessing/
+│   ├── System_data/
+│   ├── PySide6_GUI.py
+│   ├── GridReader.py
+│   └── ...
 ├── README.md
 ├── requirements.txt
 └── ...
