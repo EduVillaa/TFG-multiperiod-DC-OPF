@@ -18,7 +18,7 @@ TFG-multiperiod-DC-OPF/
 │   ├── System_data/
 │   ├── PySide6_GUI.py
 │   ├── GridReader.py
-│   └── ...
+│   └── GridInputs.xlsx
 ├── README.md
 ├── requirements.txt
 └── ...
