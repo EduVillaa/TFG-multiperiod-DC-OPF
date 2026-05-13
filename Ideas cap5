@@ -1,3 +1,6 @@
 Ideas capítulo 5
-- Incluir batería en todos los nodos con el mismo capex, optimizar batería para cada año (2015-2025) ver como la distribución de la batería en la red varía en función de la saturación de las líneas, de la potencia PV y eólica instalada por nodo y de la variabilidad de la demanda.
+- Incluir batería en todos los nodos con el mismo capex, optimizar batería para cada año (2015-2025) ver como la distribución de la batería en la red varía en función de la saturación de las líneas, de la potencia PV y eólica instalada por nodo, la variabilidad de la demanda y los precios nodales.
 - Ver como a lo largo de los años se instala más batería en función de la renovable instalada
+- Ver cuanta batería se hubiera necesitado en 2024-2025 para lograr 100% libre de emisiones y 100% renovable
+- Ver como al instalar más batería cambia el curtailment renovable, las emisiones de C02 y el coste total del sistema
+- Hacer un barrido de simulaciones para diferentes capex para obtener a partir de que precios es rentable
