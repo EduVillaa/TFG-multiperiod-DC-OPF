@@ -1,4 +1,5 @@
-
+## Running the program
+In order to run the program the user must execute the PySide6_GUI.py code and he or she must select the excel document GridInputs.xlsx from which the network data will be read.
 ## Input data
 
 The input data required to run the model are not included directly in this repository due to file size limitations.
