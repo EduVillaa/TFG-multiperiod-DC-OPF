@@ -140,49 +140,33 @@ def add_dispatchable_generators(
         add_kwargs["ramp_limit_start_up"] = ramp_limit_start_up
         add_kwargs["ramp_limit_shut_down"] = ramp_limit_shut_down
 
-        #Los generadores ror no son despachables 
-        if carrier == "ror":
+        commit = df_Gen_Dispatchable.loc[n, "Committable"]
+        print(commit)
+        if commit == False:
             gen_name = f"{carrier}_{location}_{n}"
             committable = False
-
             gen_col = f"{location} ror"
 
-            if gen_col not in df_ror_p_max_pu_scaled.columns:
-                raise ValueError(f"No existe la columna '{gen_col}' en df_ror_p_max_pu_scaled")
+            if carrier == "ror":
+                if gen_col not in df_ror_p_max_pu_scaled.columns:
+                    raise ValueError(f"No existe la columna '{gen_col}' en df_ror_p_max_pu_scaled")
 
-            p_max_pu = df_ror_p_max_pu_scaled[gen_col].copy()
-            p_max_pu.index = pd.to_datetime(p_max_pu.index)
-            p_max_pu = p_max_pu.reindex(grid.snapshots)
+                p_max_pu = df_ror_p_max_pu_scaled[gen_col].copy()
+                p_max_pu.index = pd.to_datetime(p_max_pu.index)
+                p_max_pu = p_max_pu.reindex(grid.snapshots)
 
-            if p_max_pu.isna().any():
-                raise ValueError(
-                    f"Hay NaN en p_max_pu para {gen_col} después de reindexar. "
-                    f"Revisa snapshots y fechas."
-                )
+                if p_max_pu.isna().any():
+                    raise ValueError(
+                        f"Hay NaN en p_max_pu para {gen_col} después de reindexar. "
+                        f"Revisa snapshots y fechas."
+                    )
+                p_max_pu = p_max_pu.clip(lower=0, upper=1)
+                # Muy importante para evitar infeasibility
+                # Para ror muy importante no meter restricciones de unit commitment ni rampas porque no es comittable, de hecho ni siquiera es despachable
+                # 3 horas troubleshooteando esto!!
+            else:
+                p_max_pu = 1.0
 
-            p_max_pu = p_max_pu.clip(lower=0, upper=1)
-            print("P max pu del ror")
-            print(p_max_pu)
-            # Muy importante para evitar infeasibility
-            p_min_pu = 0.0
-
-            # Para ror muy importante no meter restricciones de unit commitment ni rampas porque no es comittable, de hecho ni siquiera es despachable
-            # 3 horas troubleshooteando esto!!
-            add_kwargs = {}
-
-            start_up_cost = 0.0
-            shut_down_cost = 0.0
-            stand_by_cost = 0.0
-            min_up_time = 0
-            min_down_time = 0
-            up_time_before = 0
-            down_time_before = 0
-        
-        elif carrier == "biomass":
-            gen_name = f"{carrier}_{location}_{n}"
-            
-            committable = False
-            p_max_pu = 1.0
             p_min_pu = 0.0
             add_kwargs = {}
             start_up_cost = 0.0
@@ -193,7 +177,7 @@ def add_dispatchable_generators(
             up_time_before = 0
             down_time_before = 0
 
-        else:
+        elif commit == True:
             committable = True
             p_max_pu = 1.0
 
