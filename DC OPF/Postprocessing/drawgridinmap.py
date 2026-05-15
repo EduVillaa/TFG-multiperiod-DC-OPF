@@ -87,11 +87,12 @@ def drawrealgrid(grid: pypsa.Network, df_Net_Buses: pd.DataFrame, filename):
     # ----------------------
     # 2. Dibujar buses
     # ----------------------
+
     ax.scatter(
         grid.buses.x,
         grid.buses.y,
         s=150,
-        color="red",
+        color="blue",
         edgecolors="black",
         transform=ccrs.PlateCarree(),
         zorder=3

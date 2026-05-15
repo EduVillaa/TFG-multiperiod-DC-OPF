@@ -8,17 +8,19 @@ from openpyxl.styles import Border, Side
 from matplotlib.lines import Line2D
 import re
 import networkx as nx
-from Postprocessing.Graphs.dispatchgraphs import dispatch_graph_resolution_choice
-from Postprocessing.Graphs.SOCgraphs import SOC_graph_resolution_choice
-from Postprocessing.Graphs.lineflowgraphs import maxloading_graph_resolution_choice, plot_line_loading_histogram_global, plot_line_loading_histogram_top_lines
-from Postprocessing.Graphs.sankeygraph import plot_energy_balance_sankey
-from Postprocessing.Graphs.renewablegraphs import renewable_graph_resolution_choice
-from Postprocessing.Graphs.renewablesharegraphs import renewableshare_graph_resolution_choice
-from Postprocessing.Graphs.import_export_graphs import GridExportImport_graph_resolution_choice
+from Postprocessing.Multiperiod_Graphs.dispatchgraphs import dispatch_graph_resolution_choice
+from Postprocessing.Multiperiod_Graphs.SOCgraphs import SOC_graph_resolution_choice
+from Postprocessing.Multiperiod_Graphs.lineflowgraphs import maxloading_graph_resolution_choice, plot_line_loading_histogram_global, plot_line_loading_histogram_top_lines
+from Postprocessing.Multiperiod_Graphs.sankeygraph import plot_energy_balance_sankey
+from Postprocessing.Multiperiod_Graphs.renewablegraphs import renewable_graph_resolution_choice
+from Postprocessing.Multiperiod_Graphs.renewablesharegraphs import renewableshare_graph_resolution_choice
+from Postprocessing.Multiperiod_Graphs.import_export_graphs import GridExportImport_graph_resolution_choice
 from Postprocessing.KPIsoptimized_battery import get_battery_sizes
-from Postprocessing.Graphs.loadgraphs import total_load_graph_resolution_choice
-from Postprocessing.Graphs.pricesgraphs import prices_graph_resolution_choice, nodal_price_histogram
-from Postprocessing.Graphs.FranceMorocco_imp_exp import interconnection_graph_resolution_choice
+from Postprocessing.Multiperiod_Graphs.loadgraphs import total_load_graph_resolution_choice
+from Postprocessing.Multiperiod_Graphs.pricesgraphs import prices_graph_resolution_choice, nodal_price_histogram
+from Postprocessing.Multiperiod_Graphs.FranceMorocco_imp_exp import interconnection_graph_resolution_choice
+from Postprocessing.Multiperiod_Graphs.pie_graph import plot_generation_mix_pie
+
 
 def save_plotly_fig(fig, path, width=1200, height=750, scale=2):
     if fig is None:
@@ -451,7 +453,7 @@ CFwind: float) -> None:
             dispatch_clean[col] = dispatch[col]
 
     dispatch_clean = dispatch_clean.loc[:, (dispatch_clean.abs() > 1e-6).any()]
-    print(dispatch_clean)
+   
     # ============================================================
     # GENERACIÓN DE FIGURAS
     # ============================================================
@@ -468,13 +470,15 @@ CFwind: float) -> None:
     fig_total_load = total_load_graph_resolution_choice(df_SYS_settings, grid)
     fig_export_import = GridExportImport_graph_resolution_choice(df_SYS_settings, dispatch_clean)
     fig_imp_exp_France_Morocco = interconnection_graph_resolution_choice(df_SYS_settings, grid)
+    #fig_pie_chart, mix_df = plot_generation_mix_pie(dispatch_clean)
+    #print(mix_df)
     
     fig_renewable_total, fig_renewable_pv_wind = renewable_graph_resolution_choice(df_SYS_settings, 
                                                                                    dispatch_clean, df_available_renewable)
     
     fig_renewable_share_total = renewableshare_graph_resolution_choice(df_SYS_settings, dispatch_clean, grid)
     fig_grid_topology = drawGrid(grid)
-    fig_mean_prices, fig_heatmap = prices_graph_resolution_choice(df_SYS_settings, grid, 2)
+    fig_mean_prices, fig_heatmap = prices_graph_resolution_choice(df_SYS_settings, grid, 15)
   
     fig_prices_histogram = nodal_price_histogram(grid, "Multiperiod")
 
@@ -509,7 +513,9 @@ CFwind: float) -> None:
     )
         dispatch_clean.round(2).to_excel(writer, sheet_name="dispatch")
         df_detailed_renewable.round(2).to_excel(writer, sheet_name="Solar and wind")
-        grid.stores_t.e.round(2).to_excel(writer, sheet_name="battery soc")
+        grid.stores_t.e.round(2).to_excel(writer, sheet_name="storage dispatch")
+        soc_pu_all = grid.stores_t.e.divide(grid.stores.e_nom, axis=1)
+        soc_pu_all.round(2).to_excel(writer, sheet_name="storage SOC")
         grid.lines_t.p0.round(2).to_excel(writer, sheet_name="line flows")
         grid.buses_t.marginal_price.round(2).to_excel(writer, sheet_name="prices")
         df_loads.to_excel(writer, sheet_name="loads")
@@ -519,6 +525,7 @@ CFwind: float) -> None:
     saved_dispatch = save_fig(fig_dispatch, img_dir / "dispatch.png")
     #saved_sankey = save_plotly_fig(fig_sankey, img_dir / "sankey.png")
     saved_sankey_html = save_plotly_html(fig_sankey, img_dir / "sankey.html")
+    #saved_pie_chart_html = save_plotly_html(fig_pie_chart, img_dir / "piechart.html")
     saved_soc_total = save_fig(fig_soc_total, img_dir / "battery_soc_total.png")
     saved_soc_batteries = save_fig(fig_soc_batteries, img_dir / "battery_soc_batteries.png")
 
@@ -609,7 +616,7 @@ CFwind: float) -> None:
                 max_width=520*2,
                 max_height=300*2
             )
-            print("figura insertada")
+            
 
         """
         if saved_sankey_html:
@@ -623,9 +630,15 @@ CFwind: float) -> None:
         """
         if saved_sankey_html:
             ws = wb["KPIs"]
-            ws["C17"] = "Open interactive Sankey"
-            ws["C17"].hyperlink = str((img_dir / "sankey.html").resolve())
-            ws["C17"].style = "Hyperlink"
+            ws["B40"] = "Open interactive Sankey"
+            ws["B40"].hyperlink = str((img_dir / "sankey.html").resolve())
+            ws["B40"].style = "Hyperlink"
+        
+        """if saved_pie_chart_html:
+            ws = wb["KPIs"]
+            ws["B42"] = "Open interactive Pie chart"
+            ws["B42"].hyperlink = str((img_dir / "piechart.html").resolve())
+            ws["B42"].style = "Hyperlink"""
 
         if saved_export_import:
             insert_fig_in_sheet(
@@ -638,7 +651,7 @@ CFwind: float) -> None:
 
         if saved_soc_total:
             insert_fig_in_sheet(
-                wb["battery soc"],
+                wb["storage SOC"],
                 img_dir / "battery_soc_total.png",
                 cell="J2",
                 max_width=520*2,
@@ -647,7 +660,7 @@ CFwind: float) -> None:
 
         if saved_soc_batteries:
             insert_fig_in_sheet(
-                wb["battery soc"],
+                wb["storage SOC"],
                 img_dir / "battery_soc_batteries.png",
                 cell="J25",
                 max_width=520*2,
