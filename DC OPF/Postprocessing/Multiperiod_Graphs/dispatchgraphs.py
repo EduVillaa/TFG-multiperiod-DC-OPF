@@ -12,8 +12,8 @@ def plot_dispatch_figure_weekly_average(dispatch_clean: pd.DataFrame, horizon: s
         return None
 
     pos_cols = ["Nuclear", "Other", "CCGT", "ror", "biomass", "PV", "Wind", "battery_discharge", 
-                "Grid_import", "Hidroelectric_discharge"]
-    neg_cols = ["battery_charge", "Grid_export", "Hidroelectric_charge"]
+                "Grid_import", "Hydro_discharge", "PHS_discharge"]
+    neg_cols = ["battery_charge", "Grid_export", "PHS_charge"]
 
     pos_cols = [c for c in pos_cols if c in dispatch_clean.columns]
     neg_cols = [c for c in neg_cols if c in dispatch_clean.columns]
@@ -22,18 +22,20 @@ def plot_dispatch_figure_weekly_average(dispatch_clean: pd.DataFrame, horizon: s
         "PV": "#FFD54F",                     # amarillo solar
         "Wind": "#4FC3F7",                   # azul claro
         "ror": "#4DB6AC",                    # turquesa agua fluyente
-        "Hidroelectric_discharge": "#1976D2", # azul hidro
+        "Hydro_discharge": "#1976D2",        # azul hidro
+        "PHS_discharge": "#09577E",
         "battery_discharge": "#66BB6A",      # verde batería descarga
         "biomass": "#8D6E63",                # marrón biomasa
         "Nuclear": "#9575CD",                # morado nuclear
         "CCGT": "#E57373",                   # rojo gas
-        "Other": "#EF5350",               # rojo genérico despacho
+        "Other": "#EF5350",                  # rojo genérico despacho
 
         "Grid_import": "#B0BEC5",            # gris claro importación
 
         "battery_charge": "#2E7D32",         # verde oscuro carga batería
         "Hidroelectric_charge": "#0D47A1",   # azul oscuro bombeo/carga hidro
-        "Grid_export": "#424242"             # gris oscuro exportación
+        "Grid_export": "#424242",             # gris oscuro exportación
+        "PHS_charge": "#0D47A1",   
     }
 
     # Nos quedamos solo con las columnas relevantes
@@ -112,8 +114,8 @@ def plot_dispatch_figure_daily_average(dispatch_clean: pd.DataFrame, horizon: st
         return None
 
     pos_cols = ["Nuclear", "Other", "CCGT", "ror", "biomass", "PV", "Wind", "battery_discharge", 
-                "Grid_import", "Hidroelectric_discharge"]
-    neg_cols = ["battery_charge", "Grid_export", "Hidroelectric_charge"]
+                "Grid_import", "Hydro_discharge", "PHS_discharge"]
+    neg_cols = ["battery_charge", "Grid_export", "PHS_charge"]
 
     pos_cols = [c for c in pos_cols if c in dispatch_clean.columns]
     neg_cols = [c for c in neg_cols if c in dispatch_clean.columns]
@@ -122,18 +124,20 @@ def plot_dispatch_figure_daily_average(dispatch_clean: pd.DataFrame, horizon: st
         "PV": "#FFD54F",                     # amarillo solar
         "Wind": "#4FC3F7",                   # azul claro
         "ror": "#4DB6AC",                    # turquesa agua fluyente
-        "Hidroelectric_discharge": "#1976D2", # azul hidro
+        "Hydro_discharge": "#1976D2",        # azul hidro
+        "PHS_discharge": "#09577E",
         "battery_discharge": "#66BB6A",      # verde batería descarga
         "biomass": "#8D6E63",                # marrón biomasa
         "Nuclear": "#9575CD",                # morado nuclear
         "CCGT": "#E57373",                   # rojo gas
-        "Other": "#EF5350",               # rojo genérico despacho
+        "Other": "#EF5350",                  # rojo genérico despacho
 
         "Grid_import": "#B0BEC5",            # gris claro importación
 
         "battery_charge": "#2E7D32",         # verde oscuro carga batería
         "Hidroelectric_charge": "#0D47A1",   # azul oscuro bombeo/carga hidro
-        "Grid_export": "#424242"             # gris oscuro exportación
+        "Grid_export": "#424242",             # gris oscuro exportación
+        "PHS_charge": "#0D47A1",   
     }
 
     # Nos quedamos solo con las columnas relevantes
@@ -213,8 +217,8 @@ def plot_dispatch_figure_hourly_snapshots(dispatch_clean: pd.DataFrame, horizon:
     fig, ax = plt.subplots(figsize=(14, 6))
 
     pos_cols = ["Nuclear", "Other", "CCGT", "ror", "biomass", "PV", "Wind", "battery_discharge", 
-                "Grid_import", "Hidroelectric_discharge"]
-    neg_cols = ["battery_charge", "Grid_export", "Hidroelectric_charge"]
+                "Grid_import", "Hydro_discharge", "PHS_discharge"]
+    neg_cols = ["battery_charge", "Grid_export", "PHS_charge"]
 
     pos_cols = [c for c in pos_cols if c in dispatch_clean.columns]
     neg_cols = [c for c in neg_cols if c in dispatch_clean.columns]
@@ -223,18 +227,20 @@ def plot_dispatch_figure_hourly_snapshots(dispatch_clean: pd.DataFrame, horizon:
         "PV": "#FFD54F",                     # amarillo solar
         "Wind": "#4FC3F7",                   # azul claro
         "ror": "#4DB6AC",                    # turquesa agua fluyente
-        "Hidroelectric_discharge": "#1976D2", # azul hidro
+        "Hydro_discharge": "#1976D2",        # azul hidro
+        "PHS_discharge": "#09577E",
         "battery_discharge": "#66BB6A",      # verde batería descarga
         "biomass": "#8D6E63",                # marrón biomasa
         "Nuclear": "#9575CD",                # morado nuclear
         "CCGT": "#E57373",                   # rojo gas
-        "Other": "#EF5350",               # rojo genérico despacho
+        "Other": "#EF5350",                  # rojo genérico despacho
 
         "Grid_import": "#B0BEC5",            # gris claro importación
 
         "battery_charge": "#2E7D32",         # verde oscuro carga batería
         "Hidroelectric_charge": "#0D47A1",   # azul oscuro bombeo/carga hidro
-        "Grid_export": "#424242"             # gris oscuro exportación
+        "Grid_export": "#424242",             # gris oscuro exportación
+        "PHS_charge": "#0D47A1",   
     }
 
     # Positivos

@@ -88,16 +88,32 @@ def drawrealgrid(grid: pypsa.Network, df_Net_Buses: pd.DataFrame, filename):
     # 2. Dibujar buses
     # ----------------------
 
+    # Máscara para buses PCC
+    is_pcc = grid.buses.index.str.startswith("PCC")
+
+    # Buses normales
     ax.scatter(
-        grid.buses.x,
-        grid.buses.y,
+        grid.buses.loc[~is_pcc, "x"],
+        grid.buses.loc[~is_pcc, "y"],
         s=150,
         color="blue",
         edgecolors="black",
         transform=ccrs.PlateCarree(),
-        zorder=3
+        zorder=3,
+        label="Buses"
     )
 
+    # Buses PCC
+    ax.scatter(
+        grid.buses.loc[is_pcc, "x"],
+        grid.buses.loc[is_pcc, "y"],
+        s=150,
+        color="red",
+        edgecolors="black",
+        transform=ccrs.PlateCarree(),
+        zorder=4,
+        label="PCC"
+    )
     
     
 
@@ -115,7 +131,6 @@ def drawrealgrid(grid: pypsa.Network, df_Net_Buses: pd.DataFrame, filename):
         )
     """
     
-    plt.title("Electric grid (PyPSA + Cartopy)")
     plt.savefig(filename, dpi=300, bbox_inches="tight")
     plt.close(fig)
 

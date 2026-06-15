@@ -6,6 +6,7 @@ from openpyxl import load_workbook
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Border, Side
 from matplotlib.lines import Line2D
+from datetime import datetime
 import re
 import networkx as nx
 from Postprocessing.Multiperiod_Graphs.dispatchgraphs import dispatch_graph_resolution_choice
@@ -20,7 +21,9 @@ from Postprocessing.Multiperiod_Graphs.loadgraphs import total_load_graph_resolu
 from Postprocessing.Multiperiod_Graphs.pricesgraphs import prices_graph_resolution_choice, nodal_price_histogram
 from Postprocessing.Multiperiod_Graphs.FranceMorocco_imp_exp import interconnection_graph_resolution_choice
 from Postprocessing.Multiperiod_Graphs.pie_graph import plot_generation_mix_pie
+from Postprocessing.Multiperiod_Graphs.heatmap4curtailment import curtailment_heatmap_resolution_choice
 
+from Postprocessing.Multiperiod_Graphs.curtgraphs import plot_curtailment_geo_heatmap_interpolated, plot_curtailment_geo_heatmap_nodes, build_node_curtailment_map_df, build_node_curtailment_timeseries
 
 def save_plotly_fig(fig, path, width=1200, height=750, scale=2):
     if fig is None:
@@ -265,7 +268,7 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
             zorder=5
         )
 
-    """# -----------------------------
+    r"""# -----------------------------
     # 7. Etiquetas
     # -----------------------------
     def bus_label(bus_name: str) -> str:
@@ -358,14 +361,22 @@ def drawGrid(grid: pypsa.Network, pcc_bus_name: str | None = None):
     return fig
 
 
-def export_multiperiod_results(grid: pypsa.Network,
-df_SYS_settings: pd.DataFrame, 
-df_available_renewable: pd.DataFrame,
-CFsolar: float,
-CFwind: float) -> None:
-    
+def extract_multiperiod_result_tables(
+    grid: pypsa.Network,
+    df_available_renewable: pd.DataFrame,
+    include_renewable_detail: bool = True,
+    include_battery_kpis: bool = True,
+    print_index_diagnostics: bool = False,
+) -> dict:
+    """
+    Extrae tablas horarias y KPIs ligeros de una red resuelta.
+
+    Esta función no genera gráficos, no crea Sankey y no escribe Excel.
+    Rolling horizon la usa en cada ventana para evitar postprocesado pesado.
+    """
+
     dispatch = grid.generators_t.p.copy()
-    
+
     carriers = grid.generators.carrier.dropna().unique()
 
     for carrier in carriers:
@@ -400,11 +411,13 @@ CFwind: float) -> None:
         if c.startswith("PHS_Discharge")]
 
 
-    hydro_and_PHS_discharge = grid.links_t.p0[discharge_cols_hydro+discharge_cols_PHS].clip(lower=0).sum(axis=1)
+    hydro_discharge = grid.links_t.p0[discharge_cols_hydro].clip(lower=0).sum(axis=1)
+    PHS_discharge = grid.links_t.p0[discharge_cols_PHS].clip(lower=0).sum(axis=1)
     PHS_charge = grid.links_t.p0[charge_cols_PHS].clip(lower=0).sum(axis=1)
 
-    dispatch.insert(0, "Hidroelectric_discharge", hydro_and_PHS_discharge)
-    dispatch.insert(1, "Hidroelectric_charge", -PHS_charge)
+    dispatch.insert(0, "Hydro_discharge", hydro_discharge)
+    dispatch.insert(0, "PHS_discharge", PHS_discharge)
+    dispatch.insert(1, "PHS_charge", -PHS_charge)
 
     battery_charge = grid.links_t.p0[charge_cols].clip(lower=0).sum(axis=1)
     battery_discharge = (-grid.links_t.p1[discharge_cols]).clip(lower=0).sum(axis=1)
@@ -446,14 +459,108 @@ CFwind: float) -> None:
         "Nuclear",
         "CCGT",
         "biomass",
-        "Hidroelectric_discharge",
-        "Hidroelectric_charge"
+        "Hydro_discharge",
+        "PHS_discharge",
+        "PHS_charge",
     ]:
         if col in dispatch.columns:
             dispatch_clean[col] = dispatch[col]
 
     dispatch_clean = dispatch_clean.loc[:, (dispatch_clean.abs() > 1e-6).any()]
-   
+
+    if include_battery_kpis:
+        df_bat_optimized_data = get_battery_sizes(grid)
+    else:
+        df_bat_optimized_data = pd.DataFrame()
+
+    gen_p_renewables = grid.generators_t.p.loc[:,
+    grid.generators_t.p.columns.str.contains("PV|Wind")]
+
+    if include_renewable_detail and print_index_diagnostics:
+        print("df_available_renewable shape:", df_available_renewable.shape)
+        print("df_available_renewable index name:", df_available_renewable.index.name)
+        print("df_available_renewable index type:", type(df_available_renewable.index))
+        print("df_available_renewable n unique:", df_available_renewable.index.nunique())
+        print(
+            "df_available_renewable first/last:",
+            df_available_renewable.index.min(),
+            df_available_renewable.index.max(),
+        )
+
+        print("gen_p_renewables shape:", gen_p_renewables.shape)
+        print("gen_p_renewables index name:", gen_p_renewables.index.name)
+        print("gen_p_renewables index type:", type(gen_p_renewables.index))
+        print("gen_p_renewables n unique:", gen_p_renewables.index.nunique())
+        print(
+            "gen_p_renewables first/last:",
+            gen_p_renewables.index.min(),
+            gen_p_renewables.index.max(),
+        )
+
+        print("available - gen:", df_available_renewable.index.difference(gen_p_renewables.index))
+        print("gen - available:", gen_p_renewables.index.difference(df_available_renewable.index))
+
+    if include_renewable_detail:
+        df_detailed_renewable = build_renewable_detailed_df(
+        df_available_renewable,
+        gen_p_renewables)
+    else:
+        df_detailed_renewable = pd.DataFrame(index=df_available_renewable.index)
+
+    df_loads = pd.concat(
+    [grid.loads_t.p, grid.loads_t.p.sum(axis=1).rename("Total_load")],
+    axis=1)
+
+    soc_pu_all = grid.stores_t.e.divide(grid.stores.e_nom, axis=1)
+
+    ccgt_gens = grid.generators.index[grid.generators.carrier == "CCGT"]
+    ccgt_cost_series = grid.generators_t.marginal_cost[ccgt_gens[0]]
+
+    return {
+        "dispatch": dispatch_clean,
+        "renewable_detail": df_detailed_renewable,
+        "storage_dispatch": grid.stores_t.e.copy(),
+        "storage_soc": soc_pu_all,
+        "line_flows": grid.lines_t.p0.copy(),
+        "prices": grid.buses_t.marginal_price.copy(),
+        "loads": df_loads,
+        "ccgt_marginal_cost": ccgt_cost_series.copy(),
+        "kpis": None,
+        "battery_kpis": df_bat_optimized_data,
+        "available_renewable": df_available_renewable.copy(),
+        "generators_p": grid.generators_t.p.copy(),
+        "generators_marginal_cost": grid.generators_t.marginal_cost.copy(),
+        "links_p0": grid.links_t.p0.copy(),
+        "links_p1": grid.links_t.p1.copy(),
+        "loads_p": grid.loads_t.p.copy(),
+        "stores_e": grid.stores_t.e.copy(),
+        "lines_p0": grid.lines_t.p0.copy(),
+        "buses_marginal_price": grid.buses_t.marginal_price.copy(),
+    }
+
+
+def export_multiperiod_results(grid: pypsa.Network,
+df_SYS_settings: pd.DataFrame,
+df_available_renewable: pd.DataFrame,
+CFsolar: float,
+CFwind: float,
+df_StorageUnit: pd.DataFrame,
+solver_results: pd.DataFrame,
+output_file: str | Path | None = None,
+print_index_diagnostics: bool = False,) -> dict:
+
+    tables = extract_multiperiod_result_tables(
+        grid,
+        df_available_renewable,
+        print_index_diagnostics=print_index_diagnostics,
+    )
+    dispatch_clean = tables["dispatch"]
+    df_bat_optimized_data = tables["battery_kpis"]
+    df_detailed_renewable = tables["renewable_detail"]
+    df_loads = tables["loads"]
+    soc_pu_all = tables["storage_soc"]
+    ccgt_cost_series = tables["ccgt_marginal_cost"]
+
     # ============================================================
     # GENERACIÓN DE FIGURAS
     # ============================================================
@@ -466,44 +573,34 @@ CFwind: float) -> None:
     fig_line_heatmap, fig_line_loading, fig_most_loaded_lines_charge = maxloading_graph_resolution_choice(df_SYS_settings, grid)
     fig_total_loading_histogram = plot_line_loading_histogram_global(grid, "Multiperiod")
     fig_top_lines_loading_histogram = plot_line_loading_histogram_top_lines(grid, "Multiperiod", 3)
-    fig_sankey, df_sankey = plot_energy_balance_sankey(dispatch_clean, grid, df_available_renewable, CFsolar, CFwind)
+    fig_sankey, df_sankey = plot_energy_balance_sankey(df_SYS_settings, dispatch_clean, grid, df_available_renewable, CFsolar, CFwind)
     fig_total_load = total_load_graph_resolution_choice(df_SYS_settings, grid)
     fig_export_import = GridExportImport_graph_resolution_choice(df_SYS_settings, dispatch_clean)
     fig_imp_exp_France_Morocco = interconnection_graph_resolution_choice(df_SYS_settings, grid)
-    #fig_pie_chart, mix_df = plot_generation_mix_pie(dispatch_clean)
-    #print(mix_df)
+    fig_pie_chart, mix_df = plot_generation_mix_pie(dispatch_clean)
     
     fig_renewable_total, fig_renewable_pv_wind = renewable_graph_resolution_choice(df_SYS_settings, 
                                                                                    dispatch_clean, df_available_renewable)
     
     fig_renewable_share_total = renewableshare_graph_resolution_choice(df_SYS_settings, dispatch_clean, grid)
-    fig_grid_topology = drawGrid(grid)
+    #fig_grid_topology = drawGrid(grid)
     fig_mean_prices, fig_heatmap = prices_graph_resolution_choice(df_SYS_settings, grid, 15)
   
     fig_prices_histogram = nodal_price_histogram(grid, "Multiperiod")
 
-    df_bat_optimized_data = get_battery_sizes(grid)
+    fig_curtailment_heatmap = curtailment_heatmap_resolution_choice(df_SYS_settings, df_detailed_renewable, 15)
 
-
-    gen_p_renewables = grid.generators_t.p.loc[:, 
-    grid.generators_t.p.columns.str.contains("PV|Wind")
-    ]
-  
-  
-    df_detailed_renewable = build_renewable_detailed_df(
-    df_available_renewable,
-    gen_p_renewables
-    )   
-    df_loads = pd.concat(
-    [grid.loads_t.p, grid.loads_t.p.sum(axis=1).rename("Total_load")],
-    axis=1
-)
-
+    
     # Guardar Excel con tablas
-    output_file = "results_multiperiod.xlsx"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if output_file is None:
+        output_file = f"results_multiperiod_{timestamp}.xlsx"
+    else:
+        output_file = str(output_file)
+
     with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
         df_sankey.to_excel(writer, sheet_name="KPIs", index=False, header=False, startcol=1)
-
+        
         df_bat_optimized_data.to_excel(
         writer,
         sheet_name="KPIs",
@@ -514,18 +611,28 @@ CFwind: float) -> None:
         dispatch_clean.round(2).to_excel(writer, sheet_name="dispatch")
         df_detailed_renewable.round(2).to_excel(writer, sheet_name="Solar and wind")
         grid.stores_t.e.round(2).to_excel(writer, sheet_name="storage dispatch")
-        soc_pu_all = grid.stores_t.e.divide(grid.stores.e_nom, axis=1)
         soc_pu_all.round(2).to_excel(writer, sheet_name="storage SOC")
         grid.lines_t.p0.round(2).to_excel(writer, sheet_name="line flows")
         grid.buses_t.marginal_price.round(2).to_excel(writer, sheet_name="prices")
         df_loads.to_excel(writer, sheet_name="loads")
 
+        ccgt_cost_series.to_excel(writer, sheet_name="CCGT marginal cost")
+
+        df_SYS_settings.to_excel(writer, sheet_name="Settings", startrow=0)
+
+        solver_results.to_excel(
+            writer,
+            sheet_name="Settings",
+            startrow=len(df_SYS_settings) + 3
+        )
+
+        df_StorageUnit.to_excel(writer, sheet_name="Storage settings")
+
 
     # Guardar PNGs
     saved_dispatch = save_fig(fig_dispatch, img_dir / "dispatch.png")
-    #saved_sankey = save_plotly_fig(fig_sankey, img_dir / "sankey.png")
-    saved_sankey_html = save_plotly_html(fig_sankey, img_dir / "sankey.html")
-    #saved_pie_chart_html = save_plotly_html(fig_pie_chart, img_dir / "piechart.html")
+    saved_sankey_html = save_plotly_html(fig_sankey, img_dir / f"sankey{timestamp}.html")
+    saved_pie_chart_html = save_plotly_html(fig_pie_chart, img_dir / f"piechart{timestamp}.html")
     saved_soc_total = save_fig(fig_soc_total, img_dir / "battery_soc_total.png")
     saved_soc_batteries = save_fig(fig_soc_batteries, img_dir / "battery_soc_batteries.png")
 
@@ -541,14 +648,16 @@ CFwind: float) -> None:
 
     saved_renewable_total = save_fig(fig_renewable_total, img_dir / "renewable_total.png")
     saved_renewable_pv_wind = save_fig(fig_renewable_pv_wind, img_dir / "renewable.png")
-
+    saved_curtailment_heatmap = save_fig(fig_curtailment_heatmap, img_dir / "curtailment_heatmap.png")
     saved_renewable_share_total = save_fig(fig_renewable_share_total, img_dir / "renewable_share.png")
 
-    saved_grid_topology = save_fig(fig_grid_topology, img_dir / "gridtopology.png")
+    #saved_grid_topology = save_fig(fig_grid_topology, img_dir / "gridtopology.png")
 
     saved_meanprices = save_fig(fig_mean_prices, img_dir / "meanprices.png")
     saved_priceheatmap = save_fig(fig_heatmap, img_dir / "priceheatmap.png")
     saved_price_histogram = save_fig(fig_prices_histogram, img_dir / "pricehistogram.png")
+
+
     
     try:
         # Reabrir workbook e insertar imágenes
@@ -589,6 +698,15 @@ CFwind: float) -> None:
                 max_width=520*2,
                 max_height=300*2
             )
+        
+        if saved_curtailment_heatmap:
+            insert_fig_in_sheet(
+                wb["Solar and wind"],
+                img_dir / "curtailment_heatmap.png",
+                cell="A2",
+                max_width=520*2,
+                max_height=300*2
+            )
 
         if saved_renewable_share_total:
             insert_fig_in_sheet(
@@ -617,28 +735,17 @@ CFwind: float) -> None:
                 max_height=300*2
             )
             
-
-        """
-        if saved_sankey_html:
-            insert_fig_in_sheet(
-                wb["KPIs"],
-                img_dir / "sankey.html",
-                cell="F10",
-                max_width=380*2,
-                max_height=260*2
-            )
-        """
         if saved_sankey_html:
             ws = wb["KPIs"]
-            ws["B40"] = "Open interactive Sankey"
-            ws["B40"].hyperlink = str((img_dir / "sankey.html").resolve())
-            ws["B40"].style = "Hyperlink"
+            ws["B47"] = "Open interactive Sankey"
+            ws["B47"].hyperlink = str((img_dir / f"sankey{timestamp}.html").resolve())
+            ws["B47"].style = "Hyperlink"
         
-        """if saved_pie_chart_html:
+        if saved_pie_chart_html:
             ws = wb["KPIs"]
-            ws["B42"] = "Open interactive Pie chart"
-            ws["B42"].hyperlink = str((img_dir / "piechart.html").resolve())
-            ws["B42"].style = "Hyperlink"""
+            ws["B45"] = "Open interactive Pie chart"
+            ws["B45"].hyperlink = str((img_dir / f"piechart{timestamp}.html").resolve())
+            ws["B45"].style = "Hyperlink"
 
         if saved_export_import:
             insert_fig_in_sheet(
@@ -712,14 +819,14 @@ CFwind: float) -> None:
                 max_height=260*2
             )
 
-        if saved_grid_topology:
+        """if saved_grid_topology:
             insert_fig_in_sheet(
                 wb["KPIs"],
                 img_dir / "gridtopology.png",
                 cell="F16",
                 max_width=420*2,
                 max_height=320*2
-            )
+            )"""
         
         if saved_meanprices:
             insert_fig_in_sheet(
@@ -754,3 +861,8 @@ CFwind: float) -> None:
     except Exception as e:
         print(f"Error insertando imágenes en Excel: {e}")
         raise
+
+    tables["output_file"] = output_file
+    tables["kpis"] = df_sankey
+
+    return tables

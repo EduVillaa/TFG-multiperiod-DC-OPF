@@ -15,8 +15,6 @@ def plot_energy_balance_sankey_static(dispatch_clean, grid):
     def safe_sum(df, col):
         return df[col].sum() if col in df.columns else 0.0
 
-    print(dispatch_clean)
-
     pv = safe_sum(dispatch_clean, "PV")
     wind = safe_sum(dispatch_clean, "Wind")
     nuclear = safe_sum(dispatch_clean, "Nuclear")

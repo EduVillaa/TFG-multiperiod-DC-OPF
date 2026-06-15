@@ -740,6 +740,7 @@ def plot_line_loading_heatmap_weekly(
 
     return fig
 
+
 # Gráficos que muestran el porcentaje de carga de las líneas más cargadas. Para la versión daily y weekly se muestra 
 # la media diaria y semanal del porcentaje de carga respectivamente de las líneas más cargadas
 
