@@ -91,8 +91,8 @@ def get_embalses_closest_date(
         (available_dates - target_date).abs().argsort().iloc[0]
     ]
 
-    print(f"Fecha objetivo: {target_date.date()}")
-    print(f"Fecha disponible más cercana: {closest_date.date()}")
+    print(f"Fecha objetivo de nivel de embalse: {target_date.date()}")
+    print(f"Fecha disponible más cercana de nivel de embalse: {closest_date.date()}")
 
     # Filtrar DataFrame
     df_day = df[df[date_col] == closest_date].copy()

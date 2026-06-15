@@ -170,8 +170,6 @@ def build_nodes_runoff_dataframe(
         lat = row[lat_col_nodes]
         lon = row[lon_col_nodes]
 
-        print(f"Procesando nodo {bus}...")
-
         df_node = get_node_runoff(
             lat=lat,
             lon=lon,

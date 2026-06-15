@@ -1,7 +1,7 @@
 import pandas as pd
 from pathlib import Path
 import re
-
+import numpy as np
 
 def clean_region_name(x: str) -> str:
     """Convierte '01 Andalucía' en 'Andalucía'."""
@@ -105,43 +105,19 @@ def build_hourly_demand_by_region(
     demr_folder: str | Path,
     startdate: str,
     days: int,
-    annual_unit: str = "ktep",
 ) -> pd.DataFrame:
     """
-    Construye demanda horaria por comunidad autónoma.
-
-    Parameters
-    ----------
-    df_consumos_anuales_CCAA:
-        DataFrame con columnas:
-        - 'Comunidades y Ciudades Autónomas'
-        - 'Producto consumido'
-        - 'Periodo'
-        - 'Total'
-
-    demr_folder:
-        Carpeta donde están los ficheros DEMR_YYYYMM.
-
-    startdate:
-        Fecha inicial, por ejemplo '2022-01-01'.
-
-    days:
-        Duración de la simulación en días.
-
-    annual_unit:
-        Unidad del campo 'Total'. Probablemente 'ktep' para esos datos.
-        Opciones: 'ktep', 'GWh', 'MWh'.
-
-    Returns
-    -------
-    DataFrame:
-        Columna 'time' + una columna por comunidad autónoma.
+    Construye demanda horaria por comunidad autónoma a partir de:
+    Nueva estructura esperada:
+        Año | Comunidad | Valor
     """
 
     startdate = pd.to_datetime(startdate)
     enddate = startdate + pd.Timedelta(days=days)
 
-    years_needed = range(startdate.year, enddate.year + 1)
+    # Si enddate cae justo en 1 de enero, realmente no necesitamos ese año completo
+    last_hour = enddate - pd.Timedelta(hours=1)
+    years_needed = range(startdate.year, last_hour.year + 1)
 
     # ------------------------------------------------------------
     # 1. Preparar consumo anual por CCAA
@@ -149,21 +125,46 @@ def build_hourly_demand_by_region(
 
     annual = df_consumos_anuales_CCAA.copy()
 
-    annual = annual[annual["Producto consumido"] == "Electricidad"].copy()
+    # Limpieza básica de columnas
+    annual = annual.dropna(how="all").copy()
 
-    annual["region"] = annual["Comunidades y Ciudades Autónomas"].apply(clean_region_name)
-    annual["year"] = annual["Periodo"].astype(int)
+    if len(annual.columns) == 3:
+        annual = annual.iloc[:, :3].copy()
+        annual.columns = ["year", "region", "Total"]
+
+    else:
+        raise ValueError(
+            "El dataframe de consumos anuales no tiene una estructura reconocida. "
+            "Debe tener 3 columnas: año, región, total; "
+        )
+
+    annual["region"] = annual["region"].apply(clean_region_name)
+    annual["year"] = annual["year"].astype(int)
     annual["Total"] = annual["Total"].apply(total_to_numeric)
 
-    annual = annual.dropna(subset=["Total"])
+    annual = annual.dropna(subset=["Total", "region", "year"]).copy()
 
-    annual["annual_mwh"] = convert_to_mwh(annual["Total"], annual_unit)
+    # La columna E del Excel ya está en MWh
+    annual["annual_mwh"] = annual["Total"]
 
     annual_pivot = annual.pivot_table(
         index="year",
         columns="region",
         values="annual_mwh",
-        aggfunc="sum"
+        aggfunc="sum",
+    )
+
+    # Si tu demanda nacional DEMR es peninsular, quitamos islas, Ceuta y Melilla
+    regions_to_exclude = [
+        "Illes Balears",
+        "Canarias",
+        "Ceuta",
+        "Melilla",
+    ]
+
+    annual_pivot = annual_pivot.drop(
+        columns=[c for c in regions_to_exclude if c in annual_pivot.columns],
+        errors="ignore",
     )
 
     # ------------------------------------------------------------
@@ -184,35 +185,23 @@ def build_hourly_demand_by_region(
 
     national = pd.concat(hourly_parts, ignore_index=True)
     national = national.sort_values("time").reset_index(drop=True)
+
+    national["time"] = pd.to_datetime(national["time"])
     national["year"] = national["time"].dt.year
 
-    # Nos quedamos con años completos para calcular bien el reparto anual
-    national_year_total = national.groupby("year")["demand_mwh"].sum()
     # ------------------------------------------------------------
-    # 3. Construir demanda horaria por comunidad usando pesos regionales
+    # 3. Construir demanda horaria por comunidad usando pesos anuales
     # ------------------------------------------------------------
 
     result = national.copy()
 
-    # Si tu demanda nacional es PENINSULAR, elimina islas, Ceuta y Melilla
-    regions_to_exclude = [
-        "Balears, Illes",
-        "Canarias",
-        "Ceuta",
-        "Melilla"
-    ]
-
-    annual_pivot = annual_pivot.drop(
-        columns=[c for c in regions_to_exclude if c in annual_pivot.columns],
-        errors="ignore"
-    )
-
     for region in annual_pivot.columns:
-        result[region] = pd.NA
+        result[region] = np.nan
 
-    for year in result["year"].unique():
+    for year in sorted(result["year"].unique()):
 
         if year not in annual_pivot.index:
+            print(f"Warning: no hay consumo anual por CCAA para el año {year}.")
             continue
 
         regional_consumption = annual_pivot.loc[year].dropna()
@@ -220,33 +209,18 @@ def build_hourly_demand_by_region(
         total_regional_consumption = regional_consumption.sum()
 
         if total_regional_consumption == 0:
+            print(f"Warning: consumo regional total cero para el año {year}.")
             continue
 
         mask = result["year"] == year
 
-        for region in regional_consumption.index:
+        for region, annual_mwh in regional_consumption.items():
 
-            regional_weight = regional_consumption[region] / total_regional_consumption
+            regional_weight = annual_mwh / total_regional_consumption
 
             result.loc[mask, region] = (
                 result.loc[mask, "demand_mwh"] * regional_weight
             )
-
-    debug = result[
-        (result["time"] >= "2022-04-30 20:00")
-        & (result["time"] <= "2022-05-01 06:00")
-    ].copy()
-
-    region_cols = [
-        c for c in result.columns
-        if c not in ["time", "demand_mwh", "year"]
-    ]
-
-    debug["sum_regions"] = debug[region_cols].sum(axis=1)
-
-    if "Madrid, Comunidad de" in debug.columns:
-        debug["w_madrid"] = debug["Madrid, Comunidad de"] / debug["demand_mwh"]
-
 
     # ------------------------------------------------------------
     # 4. Filtrar horizonte solicitado
@@ -257,7 +231,28 @@ def build_hourly_demand_by_region(
         & (result["time"] < enddate)
     ].copy()
 
-    result = result.drop(columns=["demand_mwh", "year"])
+    # ------------------------------------------------------------
+    # 5. Comprobación opcional de consistencia
+    # ------------------------------------------------------------
+
+    region_cols = [
+        c for c in result.columns
+        if c not in ["time", "demand_mwh", "year"]
+    ]
+
+    result["sum_regions_debug"] = result[region_cols].sum(axis=1)
+
+    max_error = (
+        result["sum_regions_debug"] - result["demand_mwh"]
+    ).abs().max()
+
+    if max_error > 1e-6:
+        print(
+            f"Warning: diferencia máxima entre demanda nacional y suma regional: "
+            f"{max_error:.6f} MWh"
+        )
+
+    result = result.drop(columns=["demand_mwh", "year", "sum_regions_debug"])
 
     return result.reset_index(drop=True)
 
@@ -362,12 +357,10 @@ def build_monthly_nodal_load_weights_ES(
     ]]
 
 
-
-
 node_to_region = {
-    "ES0 0": "Madrid",
+    "ES0 0": "Comunidad de Madrid",
     "ES0 1": "Cataluña",
-    "ES0 10": "Valencia",
+    "ES0 10": "Comunidad Valenciana",
     "ES0 11": "Cantabria",
     "ES0 12": "Castilla y León",
     "ES0 13": "Andalucía",
@@ -376,18 +369,18 @@ node_to_region = {
     "ES0 16": "Castilla y León",
     "ES0 17": "Andalucía",
     "ES0 18": "Andalucía",
-    "ES0 19": "Asturias",
+    "ES0 19": "Principado de Asturias",
     "ES0 2": "Galicia",
-    "ES0 20": "Castilla la Mancha",
-    "ES0 21": "Murcia",
-    "ES0 22": "Madrid",
+    "ES0 20": "Castilla-La Mancha",
+    "ES0 21": "Región de Murcia",
+    "ES0 22": "Comunidad de Madrid",
     "ES0 23": "Andalucía",
-    "ES0 24": "Navarra",
+    "ES0 24": "Comunidad Foral de Navarra",
     "ES0 25": "Castilla y León",
     "ES0 26": "Andalucía",
     "ES0 27": "Cataluña",
     "ES0 28": "La Rioja",
-    "ES0 29": "Valencia",
+    "ES0 29": "Comunidad Valenciana",
     "ES0 3": "País Vasco",
     "ES0 30": "Cataluña",
     "ES0 31": "Galicia",
@@ -397,9 +390,9 @@ node_to_region = {
     "ES0 35": "Extremadura",
     "ES0 36": "Galicia",
     "ES0 37": "País Vasco",
-    "ES0 38": "Castilla la Mancha",
+    "ES0 38": "Castilla-La Mancha",
     "ES0 39": "Aragón",
-    "ES0 4": "Valencia",
+    "ES0 4": "Comunidad Valenciana",
     "ES0 40": "Castilla y León",
     "ES0 5": "Andalucía",
     "ES0 6": "Aragón",
@@ -407,7 +400,6 @@ node_to_region = {
     "ES0 8": "Andalucía",
     "ES0 9": "Galicia",
 }
-
 
 """
 check = (
@@ -494,7 +486,6 @@ def build_hourly_nodal_demand(
     )
 
     nodal_demand = nodal_demand[["time"] + node_cols_sorted]
-
     return nodal_demand
 
 

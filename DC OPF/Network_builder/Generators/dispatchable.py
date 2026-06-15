@@ -10,6 +10,7 @@ def add_dispatchable_generators(
     gas_price: pd.DataFrame, 
     co2_price: pd.DataFrame,
     df_ror_p_max_pu_scaled: pd.DataFrame,
+    initial_generator_power: dict | None = None,
 ) -> None:
 
     df = df_Gen_Dispatchable.copy()
@@ -58,6 +59,7 @@ def add_dispatchable_generators(
         carrier = str(df.loc[n, "Carrier"])
         Pmin = float(df.loc[n, "Pmin (MW)"])
         marginal_cost = float(df.loc[n, "€/MWh"])
+        gen_name = f"{carrier}_{location}_{n}"
 
         ramp_limit_up = df.loc[n, "Ramp limit up (p.u)"]
         ramp_limit_down = df.loc[n, "Ramp limit down (p.u)"]
@@ -76,6 +78,12 @@ def add_dispatchable_generators(
         efficiency = float(df.loc[n, "efficiency"])
 
         p_init_raw = df.loc[n, "Initial power (MW)"]
+        p_init_from_rolling = False
+        # Rolling horizon: si llega potencia final de la ventana anterior,
+        # se reutiliza como p_init de esta ventana para generadores con rampas.
+        if initial_generator_power is not None and gen_name in initial_generator_power:
+            p_init_raw = initial_generator_power[gen_name]
+            p_init_from_rolling = True
 
         # Validaciones simples
         if Pmin < 0:
@@ -111,6 +119,16 @@ def add_dispatchable_generators(
             # 1) Acotar entre 0 y Pmax
             p_init = max(0.0, min(p_init, Pmax))
 
+            # Rolling horizon: la potencia heredada del tramo anterior define
+            # la historia inicial de la unidad para no contradecir rampas/UC.
+            if p_init_from_rolling:
+                if p_init > 0.0:
+                    down_time_before = 0
+                    up_time_before = max(up_time_before, 1)
+                else:
+                    up_time_before = 0
+                    down_time_before = max(down_time_before, 1)
+
             # 2) Si el historial indica unidad apagada antes del horizonte,
             #    la potencia inicial debe ser 0
             if down_time_before > 0:
@@ -141,9 +159,7 @@ def add_dispatchable_generators(
         add_kwargs["ramp_limit_shut_down"] = ramp_limit_shut_down
 
         commit = df_Gen_Dispatchable.loc[n, "Committable"]
-        print(commit)
         if commit == False:
-            gen_name = f"{carrier}_{location}_{n}"
             committable = False
             gen_col = f"{location} ror"
 
@@ -167,7 +183,6 @@ def add_dispatchable_generators(
             else:
                 p_max_pu = 1.0
 
-            p_min_pu = 0.0
             add_kwargs = {}
             start_up_cost = 0.0
             shut_down_cost = 0.0
@@ -183,8 +198,6 @@ def add_dispatchable_generators(
 
             if carrier is None:
                 carrier = "Other"
-
-            gen_name = f"{carrier}_{location}_{n}"
     
         
         grid.add(
@@ -213,4 +226,3 @@ def add_dispatchable_generators(
                 grid.generators_t.marginal_cost[gen_name] = ccgt_cost["PORTUGAL CCGT [EUR/MWh]"]
             elif "ES" in location:
                 grid.generators_t.marginal_cost[gen_name] = ccgt_cost["SPAIN CCGT [EUR/MWh]"]
-

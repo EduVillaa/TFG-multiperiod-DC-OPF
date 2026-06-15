@@ -1,6 +1,7 @@
 import pypsa
 import pandas as pd
 import numpy as np
+import warnings
 from Network_builder.Storage.runoff4hydro import get_hydro_inflow_node
 
 
@@ -13,6 +14,8 @@ def add_storage_as_store_links(
     CRF,
     df_hydro_inflow_scaled: pd.DataFrame,
     initial_soc_fraction: float,
+    initial_storage_state: dict | None = None,
+    force_non_cyclic: bool = False,
 ) -> list[dict]:
     
     """
@@ -128,7 +131,8 @@ def add_storage_as_store_links(
         eta_store = float(df.loc[n, "Efficiency store (p.u)"])
         eta_dispatch = float(df.loc[n, "Efficiency dispatch (p.u)"])
         standing_loss = float(df.loc[n, "Standing loss (%/h)"])
-        e_cyclic = bool(df.loc[n, "Cyclic SOC (0/1)"])
+        cyclic_soc_input = bool(df.loc[n, "Cyclic SOC (0/1)"])
+        e_cyclic = cyclic_soc_input
         marginal_cost = float(df.loc[n, "Marginal cost (€/MWh)"])
         capex_storage = float(df.loc[n, "Investment cost storage (€/MWh)"])
         capex_inverter = float(df.loc[n, "Investment cost inverter (€/MW)"])
@@ -182,6 +186,14 @@ def add_storage_as_store_links(
         if carrier == "hydro":
             initial_soc = initial_soc_fraction
             e_initial = initial_soc * e_nom_base
+
+        # Rolling horizon: permite enlazar el SOC final de una ventana
+        # como SOC inicial de la siguiente sin cambiar el flujo normal.
+        if initial_storage_state is not None and store_name in initial_storage_state:
+            e_initial = float(initial_storage_state[store_name])
+
+        if force_non_cyclic:
+            e_cyclic = False
 
         store_kwargs = dict(
             bus=bat_bus,
@@ -298,9 +310,21 @@ def add_storage_as_store_links(
             "store_name": store_name,
             "charge_link_name": charge_link_name,
             "discharge_link_name": discharge_link_name,
+            "carrier": carrier,
+            # Rolling horizon: conserva el valor original del input aunque
+            # e_cyclic se fuerce a False para evitar igualdad estricta.
+            "cyclic_soc_input": cyclic_soc_input,
             "optimize_p": optimize_p,
             "optimize_e": optimize_e,
             "optimization_mode": optimization_mode,
         })
+
+    if initial_storage_state is not None:
+        created_stores = {spec["store_name"] for spec in battery_specs}
+        for store_name in set(initial_storage_state) - created_stores:
+            warnings.warn(
+                "Rolling horizon recibió estado inicial para un almacenamiento "
+                f"no creado en esta ventana: '{store_name}'."
+            )
 
     return battery_specs

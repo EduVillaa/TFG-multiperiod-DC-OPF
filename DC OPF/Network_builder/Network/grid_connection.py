@@ -6,7 +6,8 @@ def grid_connection(
     grid: pypsa.Network,
     df_Grid_connection: pd.DataFrame,
     df_TS_Energy_Prices: pd.DataFrame,
-    df_SYS_settings: pd.DataFrame
+    df_SYS_settings: pd.DataFrame,
+    morocco_exchange_series=None,
 ) -> None:
 
     params = df_SYS_settings["SYSTEM PARAMETERS"]
@@ -101,7 +102,11 @@ def grid_connection(
     link_name = "LPCC_Morocco_ES0 23"
 
     if link_name in grid.links.index:
-        saldo_marruecos = morocco_net_exchange(grid, df_SYS_settings)
+        if morocco_exchange_series is None:
+            saldo_marruecos = morocco_net_exchange(grid, df_SYS_settings)
+        else:
+            saldo_marruecos = morocco_exchange_series.reindex(grid.snapshots)
+
         saldo_marruecos = saldo_marruecos.reindex(grid.snapshots)
 
         p_nom_link = grid.links.loc[link_name, "p_nom"]
@@ -111,8 +116,8 @@ def grid_connection(
             upper=p_nom_link
         )
 
-    grid.links_t.p_min_pu[link_name] = saldo_marruecos / p_nom_link
-    grid.links_t.p_max_pu[link_name] = saldo_marruecos / p_nom_link
+        grid.links_t.p_min_pu[link_name] = saldo_marruecos / p_nom_link
+        grid.links_t.p_max_pu[link_name] = saldo_marruecos / p_nom_link
 
     # ============================================================
     # 4. PRECIOS HORARIOS SI ES MULTIPERIODO
