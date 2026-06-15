@@ -50,8 +50,6 @@ def MILPvsLP(filename):
     return bool(committable.isin(["true", "1", "yes", "y", "si", "sí"]).any())
 
 
-
-
 class Worker(QThread):
     finished = Signal()
     error = Signal(str)
@@ -125,12 +123,85 @@ class MainWindow(QWidget):
         self.start_date_edit.setDisplayFormat("dd/MM/yyyy")
         self.start_date_edit.setMinimumDate(self.min_start_date)
         self.start_date_edit.setMaximumDate(self.max_end_date)
-        self.start_date_edit.setDate(QDate(2020, 1, 1))
+        self.start_date_edit.setDate(QDate(2024, 1, 1))
 
         self.duration_input = QSpinBox()
         self.duration_input.setRange(1, 3650)
         self.duration_input.setValue(365)
         self.duration_input.setSuffix(" days")
+
+        # Rolling horizon: fase 1, solo configuración desde la GUI.
+        self.rolling_horizon_enabled_input = QCheckBox()
+        self.rolling_horizon_enabled_input.setChecked(False)
+        self.rolling_horizon_enabled_input.setToolTip(
+            "Enable rolling horizon mode. In this phase it only stores the configuration."
+        )
+
+        self.rolling_horizon_days_input = QSpinBox()
+        self.rolling_horizon_days_input.setRange(1, 7)
+        self.rolling_horizon_days_input.setValue(3)
+        self.rolling_horizon_days_input.setSuffix(" days")
+        self.rolling_horizon_days_input.setToolTip(
+            "Duration of each rolling horizon segment. Allowed range: 1 to 7 days."
+        )
+
+        # Rolling horizon: banda terminal para la trayectoria agregada de SOC hydro.
+        self.rolling_hydro_soc_band_input = QDoubleSpinBox()
+        self.rolling_hydro_soc_band_input.setRange(0.0, 30.0)
+        self.rolling_hydro_soc_band_input.setDecimals(2)
+        self.rolling_hydro_soc_band_input.setSingleStep(1.0)
+        self.rolling_hydro_soc_band_input.setValue(0.5)
+        self.rolling_hydro_soc_band_input.setSuffix(" %")
+        self.rolling_hydro_soc_band_input.setToolTip(
+            "Allowed band around the interpolated hydro SOC target in rolling horizon."
+        )
+
+        # Rolling horizon: valor residual de energía final en BatteryStore.
+        self.rolling_batterystore_residual_value_input = QDoubleSpinBox()
+        self.rolling_batterystore_residual_value_input.setRange(0.0, 1_000_000.0)
+        self.rolling_batterystore_residual_value_input.setDecimals(2)
+        self.rolling_batterystore_residual_value_input.setSingleStep(1.0)
+        self.rolling_batterystore_residual_value_input.setValue(0.0)
+        self.rolling_batterystore_residual_value_input.setSuffix(" €/MWh")
+        self.rolling_batterystore_residual_value_input.setToolTip(
+            "Residual value subtracted from the rolling horizon objective for final BatteryStore SOC."
+        )
+
+        # Rolling horizon: SOC mínimo terminal individual para BatteryStore.
+        self.rolling_batterystore_min_final_soc_input = QDoubleSpinBox()
+        self.rolling_batterystore_min_final_soc_input.setRange(0.0, 95.0)
+        self.rolling_batterystore_min_final_soc_input.setDecimals(2)
+        self.rolling_batterystore_min_final_soc_input.setSingleStep(1.0)
+        self.rolling_batterystore_min_final_soc_input.setValue(0.0)
+        self.rolling_batterystore_min_final_soc_input.setSuffix(" %")
+        self.rolling_batterystore_min_final_soc_input.setToolTip(
+            "Minimum final SOC required for each BatteryStore at the end of every rolling window."
+        )
+
+        # Simulación anual sin rolling: restricciones terminales intermedias hydro/PHS.
+        self.intermediate_storage_constraints_enabled_input = QCheckBox()
+        self.intermediate_storage_constraints_enabled_input.setChecked(False)
+        self.intermediate_storage_constraints_enabled_input.setToolTip(
+            "Apply hydro/PHS terminal constraints at intermediate points without enabling rolling horizon."
+        )
+
+        self.intermediate_storage_constraint_days_input = QSpinBox()
+        self.intermediate_storage_constraint_days_input.setRange(1, 7)
+        self.intermediate_storage_constraint_days_input.setValue(3)
+        self.intermediate_storage_constraint_days_input.setSuffix(" days")
+        self.intermediate_storage_constraint_days_input.setToolTip(
+            "Duration of each intermediate block. The optimization is still solved once."
+        )
+
+        self.intermediate_hydro_soc_band_input = QDoubleSpinBox()
+        self.intermediate_hydro_soc_band_input.setRange(0.0, 30.0)
+        self.intermediate_hydro_soc_band_input.setDecimals(2)
+        self.intermediate_hydro_soc_band_input.setSingleStep(0.1)
+        self.intermediate_hydro_soc_band_input.setValue(0.5)
+        self.intermediate_hydro_soc_band_input.setSuffix(" %")
+        self.intermediate_hydro_soc_band_input.setToolTip(
+            "Allowed band around the interpolated hydro SOC target at intermediate points."
+        )
 
         self.resolution_combo = QComboBox()
         self.resolution_combo.addItems(["Auto", "Hourly", "Daily", "Weekly"])
@@ -299,7 +370,7 @@ class MainWindow(QWidget):
         self.line_flow_penalty_input.setRange(0.0, 1000.0)
         self.line_flow_penalty_input.setDecimals(4)
         self.line_flow_penalty_input.setSingleStep(0.01)
-        self.line_flow_penalty_input.setValue(0.0)
+        self.line_flow_penalty_input.setValue(0)
         self.line_flow_penalty_input.setSuffix(" €/MWh")
         self.line_flow_penalty_input.setToolTip(
             "Penalty applied to the absolute value of AC line flows. "
@@ -321,6 +392,24 @@ class MainWindow(QWidget):
         self.horizon_row_label = QLabel("Static / Multiperiod")
         self.start_date_row_label = QLabel("Start date")
         self.duration_row_label = QLabel("Simulation duration")
+        self.rolling_horizon_enabled_row_label = QLabel("Enable rolling horizon")
+        self.rolling_horizon_days_row_label = QLabel("Rolling horizon segment duration")
+        self.rolling_hydro_soc_band_row_label = QLabel("Hydro trajectory margin (%)")
+        self.rolling_batterystore_residual_value_row_label = QLabel(
+            "BatteryStore residual value [€/MWh]"
+        )
+        self.rolling_batterystore_min_final_soc_row_label = QLabel(
+            "BatteryStore minimum final SOC (%)"
+        )
+        self.intermediate_storage_constraints_enabled_row_label = QLabel(
+            "Apply intermediate hydro/PHS terminal constraints"
+        )
+        self.intermediate_storage_constraint_days_row_label = QLabel(
+            "Intermediate hydro/PHS block duration"
+        )
+        self.intermediate_hydro_soc_band_row_label = QLabel(
+            "Intermediate hydro trajectory margin (%)"
+        )
         self.static_date_row_label = QLabel("Static snapshot date")
         self.static_hour_row_label = QLabel("Static snapshot hour")
         self.end_date_row_label = QLabel("End date")
@@ -355,6 +444,38 @@ class MainWindow(QWidget):
         form_layout.addRow(self.static_date_row_label, self.static_date_edit)
         form_layout.addRow(self.static_hour_row_label, self.static_hour_edit)
         form_layout.addRow(self.duration_row_label, self.duration_input)
+        form_layout.addRow(
+            self.rolling_horizon_enabled_row_label,
+            self.rolling_horizon_enabled_input
+        )
+        form_layout.addRow(
+            self.rolling_horizon_days_row_label,
+            self.rolling_horizon_days_input
+        )
+        form_layout.addRow(
+            self.rolling_hydro_soc_band_row_label,
+            self.rolling_hydro_soc_band_input
+        )
+        form_layout.addRow(
+            self.rolling_batterystore_residual_value_row_label,
+            self.rolling_batterystore_residual_value_input
+        )
+        form_layout.addRow(
+            self.rolling_batterystore_min_final_soc_row_label,
+            self.rolling_batterystore_min_final_soc_input
+        )
+        form_layout.addRow(
+            self.intermediate_storage_constraints_enabled_row_label,
+            self.intermediate_storage_constraints_enabled_input
+        )
+        form_layout.addRow(
+            self.intermediate_storage_constraint_days_row_label,
+            self.intermediate_storage_constraint_days_input
+        )
+        form_layout.addRow(
+            self.intermediate_hydro_soc_band_row_label,
+            self.intermediate_hydro_soc_band_input
+        )
         form_layout.addRow(self.end_date_row_label, self.end_date_label)
         form_layout.addRow(self.resolution_row_label, self.resolution_combo)
 
@@ -419,6 +540,8 @@ class MainWindow(QWidget):
         self.start_date_edit.dateChanged.connect(self.update_end_date_label)
         self.duration_input.valueChanged.connect(self.update_end_date_label)
         self.horizon_combo.currentTextChanged.connect(self.update_dynamic_fields_visibility)
+        self.rolling_horizon_enabled_input.toggled.connect(self.update_dynamic_fields_visibility)
+        self.intermediate_storage_constraints_enabled_input.toggled.connect(self.update_dynamic_fields_visibility)
         self.solver_combo.currentTextChanged.connect(self.update_dynamic_fields_visibility)
         self.gurobi_method_input.currentTextChanged.connect(self.update_dynamic_fields_visibility)
 
@@ -477,6 +600,20 @@ class MainWindow(QWidget):
 
         is_milp = self.problem_is_milp()
         is_lp = not is_milp
+        battery_opt_enabled = self.battery_optimization_enabled()
+
+        # Rolling horizon: parámetros opcionales. Si está desactivado,
+        # el flujo de simulación individual conserva el comportamiento previo.
+        rolling_horizon_enabled = (
+            horizon == "Multiperiod"
+            and not battery_opt_enabled
+            and self.rolling_horizon_enabled_input.isChecked()
+        )
+        intermediate_storage_constraints_enabled = (
+            horizon == "Multiperiod"
+            and not rolling_horizon_enabled
+            and self.intermediate_storage_constraints_enabled_input.isChecked()
+        )
 
         params = {
             "VOLL (€/MWh)": self.voll_input.value(),
@@ -487,6 +624,22 @@ class MainWindow(QWidget):
             "time_limit": self.time_limit_input.value(),
             "Notes": self.notes_input.toPlainText().strip(),
             "problem_type": "MILP" if is_milp else "LP",
+            "rolling_horizon_enabled": rolling_horizon_enabled,
+            "rolling_horizon_days": self.rolling_horizon_days_input.value(),
+            "rolling_hydro_soc_band_percent": self.rolling_hydro_soc_band_input.value(),
+            "rolling_batterystore_residual_value_eur_per_mwh": (
+                self.rolling_batterystore_residual_value_input.value()
+            ),
+            "rolling_batterystore_min_final_soc_percent": (
+                self.rolling_batterystore_min_final_soc_input.value()
+            ),
+            "intermediate_storage_constraints_enabled": intermediate_storage_constraints_enabled,
+            "intermediate_storage_constraint_days": (
+                self.intermediate_storage_constraint_days_input.value()
+            ),
+            "intermediate_hydro_soc_band_percent": (
+                self.intermediate_hydro_soc_band_input.value()
+            ),
         }
 
         if is_milp:
@@ -555,6 +708,11 @@ class MainWindow(QWidget):
             valid, error_msg = self.validate_simulation_dates()
             if not valid:
                 QMessageBox.warning(self, "Fechas no válidas", error_msg)
+                return
+
+            valid, error_msg = self.validate_rolling_horizon_settings()
+            if not valid:
+                QMessageBox.warning(self, "Rolling horizon no válido", error_msg)
                 return
 
         elif self.horizon_combo.currentText() == "Static":
@@ -640,6 +798,77 @@ class MainWindow(QWidget):
             return False, "La fecha del snapshot estático no puede superar el 31/12/2024."
 
         return True, ""
+
+    def validate_rolling_horizon_settings(self) -> tuple[bool, str]:
+        # Rolling/intermediate: validación defensiva además de los rangos de la GUI.
+        if self.horizon_combo.currentText() != "Multiperiod":
+            return True, ""
+
+        rolling_enabled = self.rolling_horizon_enabled_input.isChecked()
+        intermediate_enabled = self.intermediate_storage_constraints_enabled_input.isChecked()
+
+        if rolling_enabled and intermediate_enabled:
+            return (
+                False,
+                "Las restricciones intermedias hydro/PHS solo aplican sin rolling horizon.",
+            )
+
+        if rolling_enabled:
+            rolling_days = self.rolling_horizon_days_input.value()
+
+            if not isinstance(rolling_days, int):
+                return False, "La duración del rolling horizon debe ser un número entero de días."
+
+            if rolling_days < 1:
+                return False, "La duración mínima del rolling horizon es 1 día."
+
+            if rolling_days > 7:
+                return False, "La duración máxima del rolling horizon es 7 días."
+
+            hydro_band = self.rolling_hydro_soc_band_input.value()
+
+            if hydro_band < 0:
+                return False, "El margen hydro del rolling horizon no puede ser negativo."
+
+            if hydro_band > 30:
+                return False, "El margen hydro máximo del rolling horizon es 30%."
+
+            batterystore_residual_value = (
+                self.rolling_batterystore_residual_value_input.value()
+            )
+
+            if batterystore_residual_value < 0:
+                return False, "El valor residual BatteryStore no puede ser negativo."
+
+            batterystore_min_final_soc = self.rolling_batterystore_min_final_soc_input.value()
+
+            if batterystore_min_final_soc < 0:
+                return False, "El SOC final mínimo BatteryStore no puede ser negativo."
+
+            if batterystore_min_final_soc > 95:
+                return False, "El SOC final mínimo BatteryStore no puede superar el 95%."
+
+        if intermediate_enabled:
+            intermediate_days = self.intermediate_storage_constraint_days_input.value()
+
+            if not isinstance(intermediate_days, int):
+                return False, "La duración de los bloques intermedios debe ser un entero."
+
+            if intermediate_days < 1:
+                return False, "La duración mínima de los bloques intermedios es 1 día."
+
+            if intermediate_days > 7:
+                return False, "La duración máxima de los bloques intermedios es 7 días."
+
+            intermediate_hydro_band = self.intermediate_hydro_soc_band_input.value()
+
+            if intermediate_hydro_band < 0:
+                return False, "El margen hydro intermedio no puede ser negativo."
+
+            if intermediate_hydro_band > 30:
+                return False, "El margen hydro intermedio máximo es 30%."
+
+        return True, ""
     
 
     def set_form_row_visible(self, label_widget, field_widget, visible: bool):
@@ -664,6 +893,28 @@ class MainWindow(QWidget):
         is_static = horizon == "Static"
 
         battery_opt_enabled = self.battery_optimization_enabled()
+        show_rolling_horizon = is_multiperiod and not battery_opt_enabled
+
+        if not show_rolling_horizon and self.rolling_horizon_enabled_input.isChecked():
+            self.rolling_horizon_enabled_input.blockSignals(True)
+            self.rolling_horizon_enabled_input.setChecked(False)
+            self.rolling_horizon_enabled_input.blockSignals(False)
+
+        rolling_horizon_enabled = (
+            show_rolling_horizon
+            and self.rolling_horizon_enabled_input.isChecked()
+        )
+        show_intermediate_constraints = is_multiperiod and not rolling_horizon_enabled
+
+        if rolling_horizon_enabled and self.intermediate_storage_constraints_enabled_input.isChecked():
+            self.intermediate_storage_constraints_enabled_input.blockSignals(True)
+            self.intermediate_storage_constraints_enabled_input.setChecked(False)
+            self.intermediate_storage_constraints_enabled_input.blockSignals(False)
+
+        intermediate_storage_constraints_enabled = (
+            show_intermediate_constraints
+            and self.intermediate_storage_constraints_enabled_input.isChecked()
+        )
         show_battery_fields = is_multiperiod and battery_opt_enabled
 
         # Detectar solver y tipo de problema
@@ -691,6 +942,56 @@ class MainWindow(QWidget):
             self.duration_row_label,
             self.duration_input,
             is_multiperiod
+        )
+
+        # Rolling horizon: se muestra solo en multiperiodo; la duración
+        # solo aparece cuando el modo rolling horizon está activado.
+        self.set_form_row_visible(
+            self.rolling_horizon_enabled_row_label,
+            self.rolling_horizon_enabled_input,
+            show_rolling_horizon
+        )
+
+        self.set_form_row_visible(
+            self.rolling_horizon_days_row_label,
+            self.rolling_horizon_days_input,
+            rolling_horizon_enabled
+        )
+
+        self.set_form_row_visible(
+            self.rolling_hydro_soc_band_row_label,
+            self.rolling_hydro_soc_band_input,
+            rolling_horizon_enabled
+        )
+
+        self.set_form_row_visible(
+            self.rolling_batterystore_residual_value_row_label,
+            self.rolling_batterystore_residual_value_input,
+            rolling_horizon_enabled
+        )
+
+        self.set_form_row_visible(
+            self.rolling_batterystore_min_final_soc_row_label,
+            self.rolling_batterystore_min_final_soc_input,
+            rolling_horizon_enabled
+        )
+
+        self.set_form_row_visible(
+            self.intermediate_storage_constraints_enabled_row_label,
+            self.intermediate_storage_constraints_enabled_input,
+            show_intermediate_constraints
+        )
+
+        self.set_form_row_visible(
+            self.intermediate_storage_constraint_days_row_label,
+            self.intermediate_storage_constraint_days_input,
+            intermediate_storage_constraints_enabled
+        )
+
+        self.set_form_row_visible(
+            self.intermediate_hydro_soc_band_row_label,
+            self.intermediate_hydro_soc_band_input,
+            intermediate_storage_constraints_enabled
         )
 
         self.set_form_row_visible(
@@ -837,4 +1138,3 @@ if __name__ == "__main__":
     window = MainWindow()
     window.show()
     app.exec()
-
