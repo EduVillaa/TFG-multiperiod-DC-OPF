@@ -23,6 +23,8 @@ TFG-multiperiod-DC-OPF/
 ├── requirements.txt
 └── ...
 ```
+The files must be named as it is shown.
+
 ## Simulation results
 The results for the simulations carried out for the final degree project can be accesed via `Zenodo` or `OneDrive`:
 - 10.5281/zenodo.20717134
