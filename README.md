@@ -25,7 +25,7 @@ TFG-multiperiod-DC-OPF/
 ```
 ## Simulation results
 The results for the simulations carried out for the final degree project can be accesed via Zenodo or OneDrive:
-10.5281/zenodo.XXXXXXX
+10.5281/zenodo.20717134
 -link onedrive-
 
 ## Funding acknowledgment
