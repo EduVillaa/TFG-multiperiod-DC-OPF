@@ -2,9 +2,9 @@
 In order to run the program the user must execute the PySide6_GUI.py code and he or she must select the excel document GridInputs.xlsx from which the network data will be read.
 ## Input data
 
-The input data required to run the model are not included directly in this repository due to file size limitations. It is available for public access in Zenodo: 10.5281/zenodo.20716997
+The input data required to run the model are not included directly in this repository due to file size limitations. It is available for public access via `Zenodo`: 10.5281/zenodo.20716997
 
-Alternatively, they can be downloaded from the following OneDrive folder:
+Alternatively, they can be downloaded from the following `OneDrive` folder:
 
 https://1drv.ms/u/c/76f4b4c107b736ef/IQBqvn7CruiST6gKF9WLLFRrAf_8S7MVC9MH4X4SbYo96UA?e=VHkq7t
 
@@ -24,9 +24,9 @@ TFG-multiperiod-DC-OPF/
 └── ...
 ```
 ## Simulation results
-The results for the simulations carried out for the final degree project can be accesed via Zenodo or OneDrive:
-10.5281/zenodo.20717134
--link onedrive-
+The results for the simulations carried out for the final degree project can be accesed via `Zenodo` or `OneDrive`:
+- 10.5281/zenodo.20717134
+- https://1drv.ms/u/c/76f4b4c107b736ef/IQAdIroQylw7TqH1C4hRiEQBAdkeYe8QET0CkfytvEQCh0Y?e=e7QX4q
 
 ## Funding acknowledgment
 
